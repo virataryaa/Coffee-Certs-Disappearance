@@ -46,8 +46,8 @@ def _flatten(html):
 
 _STYLE = f"""
 <style>
-.coffee-table-title {{ font-size: 13px; font-weight: 600; color: {INK}; margin: 0 0 2px; }}
-.coffee-table-subtitle {{ font-size: 11px; color: {MUTED}; margin: 0 0 10px; font-variant-numeric: normal; }}
+.coffee-table-title {{ font-size: 12px; font-weight: 600; color: {INK}; margin: 0 0 1px; }}
+.coffee-table-subtitle {{ font-size: 10px; color: {MUTED}; margin: 0 0 6px; font-variant-numeric: normal; }}
 </style>
 """
 
@@ -60,9 +60,9 @@ def _fmt(v, decimals=0):
 
 _HEATMAP_STYLE = f"""
 <style>
-.coffee-hm-wrap {{ overflow-x: auto; border-radius: 6px; border: 1px solid {GRID}; margin: 4px 0 20px; }}
+.coffee-hm-wrap {{ overflow-x: auto; border-radius: 6px; border: 1px solid {GRID}; margin: 2px 0 12px; }}
 .coffee-hm {{ border-collapse: collapse; width: 100%; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }}
-.coffee-hm th, .coffee-hm td {{ padding: 3px 8px; white-space: nowrap; font-size: 11px; text-align: center; }}
+.coffee-hm th, .coffee-hm td {{ padding: 2px 6px; white-space: nowrap; font-size: 10px; text-align: center; }}
 .coffee-hm th {{ background: {_NAVY}; color: {_NAVY_TEXT}; font-weight: 600; border-bottom: 1px solid #2a4a83; }}
 .coffee-hm th.idx {{ text-align: left; }}
 .coffee-hm td.idx {{ text-align: left; font-weight: 600; background: {_IDX_BG}; border-right: 1px solid {_IDX_BORDER}; }}
@@ -70,6 +70,11 @@ _HEATMAP_STYLE = f"""
 .coffee-hm td.total {{ background: {_IDX_BG}; border-left: 2px solid {_IDX_BORDER}; font-weight: 700; }}
 .coffee-hm td.ref {{ background: {_REF_BG}; color: {_REF_TEXT}; font-style: italic; font-weight: 600; }}
 .coffee-hm td.sep {{ height: 2px; padding: 0; background: {_IDX_BORDER}; }}
+.coffee-hm td.chg {{ min-width: 64px; padding: 2px 4px; }}
+.coffee-chg-track {{ position: relative; height: 13px; background: {GRID}; border-radius: 3px;
+                     overflow: hidden; display: flex; align-items: center; justify-content: center; }}
+.coffee-chg-fill {{ position: absolute; top: 0; left: 0; height: 100%; opacity: 0.20; }}
+.coffee-chg-track span {{ position: relative; z-index: 1; font-size: 9px; font-weight: 700; }}
 </style>
 """
 
@@ -170,6 +175,56 @@ def heatmap_table_html(pivot, month_cols, title, subtitle="", total_col="Total",
             if ytd_label:
                 cells.append(f'<td class="ref total">{_fmt(agg[ytd_label])}</td><td class="ref"></td>')
             body.append("<tr>" + "".join(cells) + "</tr>")
+
+    sub = f'<div class="coffee-table-subtitle">{subtitle}</div>' if subtitle else ""
+    html = f"""
+    {_STYLE}
+    {_HEATMAP_STYLE}
+    <div class="coffee-table-title">{title}</div>
+    {sub}
+    <div class="coffee-hm-wrap">
+    <table class="coffee-hm">{header}{''.join(body)}</table>
+    </div>
+    """
+    return _flatten(html)
+
+
+def _chg_cell(v, vmax_abs, decimals=0):
+    if pd.isna(v):
+        return '<td class="chg blank"></td>'
+    color = GOOD if v >= 0 else CRITICAL
+    width = max(6, min(abs(v) / vmax_abs * 100, 100)) if vmax_abs else 6
+    return (
+        f'<td class="chg"><div class="coffee-chg-track">'
+        f'<div class="coffee-chg-fill" style="width:{width:.0f}%;background:{color};"></div>'
+        f'<span style="color:{color};">{v:+,.{decimals}f}</span></div></td>'
+    )
+
+
+def stocks_change_table_html(change, avg_row, title, subtitle="", n_years=8):
+    """Calendar-year x calendar-month month-over-month stock change, with an
+    inline green(build)/red(draw) bar per cell sized to that cell's own
+    magnitude relative to the table-wide max — same idea as a delta column,
+    applied to a full grid."""
+    years = list(change.index)[-n_years:]
+    change = change.loc[years]
+    month_cols = list(change.columns)
+
+    nums = [abs(float(change.loc[y, m])) for y in years for m in month_cols if pd.notna(change.loc[y, m])]
+    vmax_abs = max(nums) if nums else 1.0
+
+    header = '<tr><th class="idx"></th>' + "".join(f"<th>{MONTH_ABBR[m]}</th>" for m in month_cols) + "</tr>"
+    body = []
+    for y in years:
+        cells = [f'<td class="idx">{y}</td>']
+        for m in month_cols:
+            cells.append(_chg_cell(change.loc[y, m], vmax_abs))
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    avg_cells = [f'<td class="idx ref">Avg</td>']
+    for m in month_cols:
+        avg_cells.append(_chg_cell(avg_row.get(m), vmax_abs))
+    body.append(f'<tr><td class="sep" colspan="{len(month_cols) + 1}"></td></tr>')
+    body.append("<tr>" + "".join(avg_cells) + "</tr>")
 
     sub = f'<div class="coffee-table-subtitle">{subtitle}</div>' if subtitle else ""
     html = f"""

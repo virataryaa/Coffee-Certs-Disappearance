@@ -50,28 +50,43 @@ def _year_style(cy, current, previous, pal_state):
     return color, 1.4
 
 
-def _base_layout(title, height=320, y_suffix=""):
+# Compact by default — dense multi-chart pages read better with small,
+# tightly-margined panels than a handful of oversized ones.
+COMPACT_HEIGHT = 220
+
+
+def _title_html(title, subtitle=""):
+    """A brief-but-detailed header: bold title, one small muted context line
+    (unit / basis / type) underneath — e.g. 'Robusta Disappearance' +
+    'Crop Year · MT · same month'."""
+    if not subtitle:
+        return f"<b>{title}</b>"
+    return f"<b>{title}</b><br><span style='font-size:9.5px;color:{MUTED}'>{subtitle}</span>"
+
+
+def _base_layout(title, height=COMPACT_HEIGHT, y_suffix="", subtitle=""):
+    top_margin = 40 if subtitle else 30
     return dict(
-        title=dict(text=title, x=0, xanchor="left", y=0.98, yanchor="top",
-                   font=dict(size=13, color=INK, family="system-ui, -apple-system, Segoe UI, sans-serif")),
+        title=dict(text=_title_html(title, subtitle), x=0, xanchor="left", y=0.97, yanchor="top",
+                   font=dict(size=12.5, color=INK, family="system-ui, -apple-system, Segoe UI, sans-serif")),
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
-        font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif", size=11),
-        margin=dict(l=48, r=16, t=40, b=36),
+        font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif", size=10),
+        margin=dict(l=44, r=10, t=top_margin, b=26),
         height=height,
         showlegend=False,
         hovermode="x unified",
-        xaxis=dict(gridcolor=GRID, linecolor=BASELINE, tickfont=dict(color=MUTED, size=10),
+        xaxis=dict(gridcolor=GRID, linecolor=BASELINE, tickfont=dict(color=MUTED, size=9),
                    showgrid=False, zeroline=False),
-        yaxis=dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED, size=10),
+        yaxis=dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED, size=9),
                    tickformat=",.0f", ticksuffix=y_suffix, zeroline=True, zerolinecolor=BASELINE,
                    zerolinewidth=1),
     )
 
 
-def _legend(y=-0.22):
+def _legend(y=-0.24):
     return dict(orientation="h", yanchor="top", y=y, xanchor="left", x=0,
-                bgcolor="rgba(0,0,0,0)", font=dict(size=10, color=INK_SECONDARY))
+                bgcolor="rgba(0,0,0,0)", font=dict(size=9, color=INK_SECONDARY))
 
 
 def recent_columns(columns, n=6):
@@ -81,7 +96,7 @@ def recent_columns(columns, n=6):
     return cols[-n:] if len(cols) > n else cols
 
 
-def seasonal_chart(wide, title, ref_years=None, current=None, previous=None, height=360):
+def seasonal_chart(wide, title, ref_years=None, current=None, previous=None, height=COMPACT_HEIGHT, subtitle=""):
     """One line per selected crop year (x = crop month), plus a Min/Max/Avg
     band from `ref_years` (last N *complete* crop years) behind them —
     mirrors TDM/files/app.py's Seasonal chart: latest year bold dark,
@@ -108,14 +123,14 @@ def seasonal_chart(wide, title, ref_years=None, current=None, previous=None, hei
         fig.add_trace(go.Scatter(x=wide.index, y=wide[cy], mode="lines+markers", name=str(cy),
                                   line=dict(color=color, width=width), marker=dict(size=4)))
 
-    layout = _base_layout(title, height)
+    layout = _base_layout(title, height, subtitle=subtitle)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def latest_vs_band_chart(wide, current, ref_years, title, height=330):
+def latest_vs_band_chart(wide, current, ref_years, title, height=COMPACT_HEIGHT, subtitle=""):
     """Min/Max/Avg band from ref_years, with ONLY the current (latest) year's
     line drawn on top — mirrors TDM's separate 'Min/Max/Avg vs Latest' panel,
     a cleaner 'is this year normal' read than the full multi-year overlay."""
@@ -132,14 +147,14 @@ def latest_vs_band_chart(wide, current, ref_years, title, height=330):
     if current in wide.columns:
         fig.add_trace(go.Scatter(x=wide.index, y=wide[current], mode="lines+markers", name=str(current),
                                   line=dict(color=YEAR_CURRENT, width=2.5), marker=dict(size=6)))
-    layout = _base_layout(title, height)
+    layout = _base_layout(title, height, subtitle=subtitle)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def cumulative_chart(cum_wide, title, current=None, previous=None, height=380):
+def cumulative_chart(cum_wide, title, current=None, previous=None, height=COMPACT_HEIGHT, subtitle=""):
     """Cumulative sum per crop year (x = crop month) — same current/previous/
     palette color scheme as seasonal_chart, no band (matches TDM's Cumulative
     panel, which is per-year lines only)."""
@@ -152,52 +167,68 @@ def cumulative_chart(cum_wide, title, current=None, previous=None, height=380):
         color, width = _year_style(cy, current, previous, pal_state)
         fig.add_trace(go.Scatter(x=cum_wide.index, y=cum_wide[cy], mode="lines+markers", name=str(cy),
                                   line=dict(color=color, width=width), marker=dict(size=4)))
-    layout = _base_layout(title, height)
+    layout = _base_layout(title, height, subtitle=subtitle)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def single_line_chart(x, y, title, color=BLUE, height=300, y_suffix=""):
+def single_line_chart(x, y, title, color=BLUE, height=COMPACT_HEIGHT, y_suffix="", subtitle=""):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(color=color, width=2)))
-    fig.update_layout(**_base_layout(title, height, y_suffix))
+    fig.update_layout(**_base_layout(title, height, y_suffix, subtitle=subtitle))
     return fig
 
 
-def two_line_chart(x, y1, name1, y2, name2, title, height=300):
+def two_line_chart(x, y1, name1, y2, name2, title, height=COMPACT_HEIGHT, subtitle=""):
     """Two series that share one meaningful axis — e.g. a level and its
     rolling average. Never use this to fake a dual-axis comparison."""
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=y1, mode="lines", name=name1, line=dict(color=BLUE, width=2)))
     fig.add_trace(go.Scatter(x=x, y=y2, mode="lines", name=name2, line=dict(color=MUTED, width=1.5, dash="dot")))
-    layout = _base_layout(title, height)
+    layout = _base_layout(title, height, subtitle=subtitle)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def multi_series_chart(df_x_date, series: dict, title, height=320):
+def multi_series_chart(df_x_date, series: dict, title, height=COMPACT_HEIGHT, subtitle=""):
     """<=4 categorical series sharing one axis, direct-labeled at the line end
     (mandatory once you're at 4 series). `series` = {name: (y_values, color)}."""
     fig = go.Figure()
     for name, (y, color) in series.items():
         fig.add_trace(go.Scatter(x=df_x_date, y=y, mode="lines", name=name, line=dict(color=color, width=2)))
-    layout = _base_layout(title, height)
+    layout = _base_layout(title, height, subtitle=subtitle)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def diverging_bar_chart(x, y, title, height=300):
+def diverging_bar_chart(x, y, title, height=COMPACT_HEIGHT, subtitle=""):
     """A single continuous time series of signed values (stock build/draw) —
     green above zero, red below. One bar per period, chronological — not
     grouped by year, which is what turns this into an unreadable wall."""
     colors = [GOOD if v >= 0 else CRITICAL for v in y]
     fig = go.Figure()
     fig.add_trace(go.Bar(x=x, y=y, marker_color=colors, marker_line_width=0))
-    fig.update_layout(**_base_layout(title, height))
+    fig.update_layout(**_base_layout(title, height, subtitle=subtitle))
+    return fig
+
+
+def rolling_multi_chart(df_by_type: dict, window: int, title, height=COMPACT_HEIGHT + 40, subtitle=""):
+    """Rolling `window`-month Disappearance for 2+ coffee types on one axis —
+    e.g. {'Robusta': (dates, values), 'Arabica': (dates, values)}. Same unit,
+    directly comparable, categorical color per type."""
+    fig = go.Figure()
+    colors = {"Robusta": BLUE, "Arabica": ORANGE}
+    for name, (x, y) in df_by_type.items():
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=name,
+                                  line=dict(color=colors.get(name, GREEN), width=2)))
+    layout = _base_layout(title, height, subtitle=subtitle)
+    layout["showlegend"] = True
+    layout["legend"] = _legend()
+    fig.update_layout(**layout)
     return fig

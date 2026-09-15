@@ -23,6 +23,21 @@ MONTH_NUM = {m: i + 1 for i, m in enumerate(MONTH_ABBR)}
 CALENDAR = 1
 CROP_YEAR = 10
 
+# Unit toggle: MT (native) or 60kg bags.
+UNIT_MT = "MT"
+UNIT_BAGS = "Bags (60kg)"
+BAGS_PER_MT = 1000 / 60
+
+
+def to_unit(value, unit):
+    """Convert a value (or Series/array) from MT to the display unit."""
+    return value if unit == UNIT_MT else value * BAGS_PER_MT
+
+
+def unit_col(unit):
+    """Column name in load_stocks()'s output for the chosen display unit."""
+    return "MT" if unit == UNIT_MT else "Bags"
+
 
 def period_month_order(start_month):
     return [MONTH_ABBR[(start_month - 1 + i) % 12] for i in range(12)]
@@ -99,21 +114,23 @@ def stocks_calendar_table(type_, unit="Bags"):
     return level, change_unit, avg_row
 
 
-def stocks_total_series():
+def stocks_total_series(unit=UNIT_BAGS):
     """Monthly Total Europe stock level + its rolling 12m average — one
     axis, two series (a level and its own smoothed trend)."""
-    total = load_stocks("Total Europe")[["Date", "Bags"]].sort_values("Date")
-    total["RollingAvg"] = total["Bags"].rolling(12, min_periods=3).mean()
+    col = "Bags" if unit == UNIT_BAGS else "MT"
+    total = load_stocks("Total Europe")[["Date", col]].sort_values("Date").rename(columns={col: "Level"})
+    total["RollingAvg"] = total["Level"].rolling(12, min_periods=3).mean()
     return total.reset_index(drop=True)
 
 
-def stocks_composition_series():
+def stocks_composition_series(unit=UNIT_BAGS):
     """Monthly Robusta / Natural Arabica / Washed Arabica stock levels, same
-    unit (bags) and comparable magnitude as each other — a legitimate single
+    unit and comparable magnitude as each other — a legitimate single
     shared axis, no Total line (that's its own chart)."""
+    col = "Bags" if unit == UNIT_BAGS else "MT"
     out = None
     for t in ("Robusta", "Natural Arabica", "Washed Arabica"):
-        sub = load_stocks(t)[["Date", "Bags"]].rename(columns={"Bags": t})
+        sub = load_stocks(t)[["Date", col]].rename(columns={col: t})
         out = sub if out is None else out.merge(sub, on="Date", how="outer")
     return out.sort_values("Date").reset_index(drop=True)
 
@@ -308,6 +325,13 @@ def cumulative_by_period(df, start_month: int = CROP_YEAR, valid_periods=None):
     return cum[[p for p in order if p in cum.columns]]
 
 
-def rolling_12m(df):
+def rolling_window(df, window):
+    """Rolling `window`-month sum of Disappearance, in the same unit as
+    df["Disappearance"] already is (caller applies to_unit() beforehand)."""
     s = df.set_index("Date")["Disappearance"].sort_index()
-    return (s.rolling(12, min_periods=12).sum() / 1000).reset_index(name="Rolling12mKMT")
+    return s.rolling(window, min_periods=window).sum().reset_index(name="Rolling")
+
+
+def rolling_12m(df):
+    r = rolling_window(df, 12)
+    return r.rename(columns={"Rolling": "Rolling12mKMT"}).assign(Rolling12mKMT=lambda d: d["Rolling12mKMT"] / 1000)
