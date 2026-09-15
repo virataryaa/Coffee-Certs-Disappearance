@@ -160,18 +160,21 @@ def load_net_imports():
     return pivot[["Date", "Year", "MonthNum", "Imports", "Exports", "NetImports"]]
 
 
-def _finalize_disappearance(merged, lag: bool, start_month: int):
+def _finalize_disappearance(merged, lag, start_month: int):
     """Shared tail end of build_disappearance() / build_disappearance_by_type():
-    apply the optional 1-month lag, compute Disappearance, and label periods.
+    apply the optional N-month lag, compute Disappearance, and label periods.
 
-    lag=True:  Net Imports is taken from the PRIOR month, matched against the
-               CURRENT month's stock change (Net Imports lead stocks by ~1
-               month in customs reporting vs certification).
-    lag=False: same-month Net Imports and Stock Change.
+    lag accepts a bool (back-compat: True == 1) or an int number of months.
+    lag=1: Net Imports is taken from 1 month prior, matched against the
+           CURRENT month's stock change (Net Imports lead stocks by ~1
+           month in customs reporting vs certification). lag=2 shifts by two
+           months instead. lag=0/False: same-month Net Imports and Stock
+           Change.
     """
-    if lag:
+    lag_months = int(lag) if not isinstance(lag, bool) else (1 if lag else 0)
+    if lag_months:
         merged = merged.sort_values("Date")
-        merged["NetImports"] = merged["NetImports"].shift(1)
+        merged["NetImports"] = merged["NetImports"].shift(lag_months)
 
     merged["Disappearance"] = merged["NetImports"] - merged["StockChange"]
     merged["Period"] = merged.apply(lambda r: period_label(int(r["Year"]), int(r["MonthNum"]), start_month), axis=1)
@@ -181,7 +184,7 @@ def _finalize_disappearance(merged, lag: bool, start_month: int):
 
 
 @st.cache_data(ttl=600)
-def build_disappearance(lag: bool, start_month: int = CROP_YEAR):
+def build_disappearance(lag: int, start_month: int = CROP_YEAR):
     """Merge Net Imports (TDM) with Stocks change (manual ECF certs) and
     compute monthly Disappearance = Net Imports - Stock Change, labeled on
     whichever period basis (Calendar = start_month 1, Crop year = 10)."""
@@ -300,7 +303,7 @@ def load_stocks_by_group(group: str):
 
 
 @st.cache_data(ttl=600)
-def build_disappearance_by_type(group: str, lag: bool, start_month: int = CROP_YEAR):
+def build_disappearance_by_type(group: str, lag: int, start_month: int = CROP_YEAR):
     """Same as build_disappearance() but for one coffee type (Robusta or
     Arabica). TDM Imports are origin-attributable (PARTNER = origin country,
     see Automator/build_type_split.py), so they're split using the monthly

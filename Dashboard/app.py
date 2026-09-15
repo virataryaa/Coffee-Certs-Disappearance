@@ -58,10 +58,10 @@ with st.sidebar:
     basis_label = st.radio("Period basis", ["Crop Year", "Calendar Year"], key="global_basis")
     st.caption("Oct–Sep" if basis_label == "Crop Year" else "Jan–Dec")
     unit_label = st.radio("Unit", [UNIT_MT, UNIT_BAGS], key="global_unit")
-    lag_label = st.radio("Lag", ["Same month", "1-month lag"], key="global_lag")
+    lag_label = st.radio("Lag", ["Same month", "1-month lag", "2-month lag"], key="global_lag")
     start_month = CALENDAR if basis_label == "Calendar Year" else CROP_YEAR
     y_unit = "MT" if unit_label == UNIT_MT else "bags"
-    lag = lag_label == "1-month lag"
+    lag = {"Same month": 0, "1-month lag": 1, "2-month lag": 2}[lag_label]
 
     _ref_df = build_disappearance(lag=lag, start_month=start_month)
     _ref_pivot = period_table(_ref_df, start_month=start_month) if not _ref_df.empty else None
