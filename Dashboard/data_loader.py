@@ -57,7 +57,8 @@ def load_stocks(type_=TOTAL_ROW):
     df = load_stocks_raw()
     df = df[df["Type of Coffee"] == type_].copy()
     df["StockChange"] = df["MT"].diff()
-    return df[["Date", "Year", "MonthNum", "MT", "Bags", "StockChange"]].reset_index(drop=True)
+    df["BagsChange"] = df["Bags"].diff()
+    return df[["Date", "Year", "MonthNum", "MT", "Bags", "StockChange", "BagsChange"]].reset_index(drop=True)
 
 
 def stocks_calendar_table(type_, unit="Bags"):
@@ -82,18 +83,23 @@ def stocks_calendar_table(type_, unit="Bags"):
     return level, change_unit, avg_row
 
 
-def stocks_dual_axis_data():
-    """Monthly Total Europe stock level (bars, right axis) plus Robusta /
-    Natural Arabica / Washed Arabica levels (lines, left axis) and a rolling
-    12-month average of the Total (dotted, right axis)."""
-    total = load_stocks("Total Europe")[["Date", "Bags"]].rename(columns={"Bags": "Total"})
-    out = total.copy()
+def stocks_total_series():
+    """Monthly Total Europe stock level + its rolling 12m average — one
+    axis, two series (a level and its own smoothed trend)."""
+    total = load_stocks("Total Europe")[["Date", "Bags"]].sort_values("Date")
+    total["RollingAvg"] = total["Bags"].rolling(12, min_periods=3).mean()
+    return total.reset_index(drop=True)
+
+
+def stocks_composition_series():
+    """Monthly Robusta / Natural Arabica / Washed Arabica stock levels, same
+    unit (bags) and comparable magnitude as each other — a legitimate single
+    shared axis, no Total line (that's its own chart)."""
+    out = None
     for t in ("Robusta", "Natural Arabica", "Washed Arabica"):
         sub = load_stocks(t)[["Date", "Bags"]].rename(columns={"Bags": t})
-        out = out.merge(sub, on="Date", how="left")
-    out = out.sort_values("Date")
-    out["RollingAvg"] = out["Total"].rolling(12, min_periods=1).mean()
-    return out.reset_index(drop=True)
+        out = sub if out is None else out.merge(sub, on="Date", how="outer")
+    return out.sort_values("Date").reset_index(drop=True)
 
 
 @st.cache_data(ttl=600)
