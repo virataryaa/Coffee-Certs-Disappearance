@@ -3,19 +3,19 @@ import streamlit as st
 from data_loader import (
     build_disappearance, build_disappearance_by_type, period_table, ytd_by_period,
     cumulative_by_period, rolling_12m, rolling_window, complete_periods, period_month_order,
-    partner_type_matrix, CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col,
+    CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col,
     TDM_EU_PARQUET, ORIGIN_TYPE_SPLIT_PARQUET,
     stock_types, stocks_calendar_table, load_stocks,
     stocks_total_series, stocks_composition_series,
 )
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
-    single_line_chart, bar_chart, seasonal_bar_chart, latest_vs_avg_bar_chart, cumulative_bar_chart,
+    single_line_chart, bar_chart, latest_vs_avg_bar_chart,
     two_line_chart, multi_series_chart, diverging_bar_chart,
     BLUE, ORANGE, AQUA,
 )
 from table_html import (
-    heatmap_table_html, stocks_level_table_html, stocks_change_table_html, partner_type_table_html,
+    heatmap_table_html, stocks_level_table_html, stocks_change_table_html, chart_header_html,
 )
 
 st.set_page_config(page_title="Coffee Certs & Disappearance", layout="wide")
@@ -50,6 +50,15 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] > div[role="radiogro
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
+
+def show_chart(fig, title, subtitle=""):
+    """Chart + its title/subtitle as real DOM text right above it (see
+    table_html.chart_header_html) — never clips, unlike a Plotly-internal
+    title anchored in paper coordinates."""
+    st.markdown(chart_header_html(title, subtitle), unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+
 # ── Global controls (sidebar) ──────────────────────────────────────────────────
 with st.sidebar:
     st.markdown('<p style="font-size:12px;font-weight:700;color:#898781;'
@@ -58,10 +67,10 @@ with st.sidebar:
     basis_label = st.radio("Period basis", ["Crop Year", "Calendar Year"], key="global_basis")
     st.caption("Oct–Sep" if basis_label == "Crop Year" else "Jan–Dec")
     unit_label = st.radio("Unit", [UNIT_MT, UNIT_BAGS], key="global_unit")
-    lag_label = st.radio("Lag", ["Same month", "1-month lag", "2-month lag"], key="global_lag")
+    lag_label = st.radio("Lag", ["Same month", "1-month lag"], key="global_lag")
     start_month = CALENDAR if basis_label == "Calendar Year" else CROP_YEAR
     y_unit = "MT" if unit_label == UNIT_MT else "bags"
-    lag = {"Same month": 0, "1-month lag": 1, "2-month lag": 2}[lag_label]
+    lag = {"Same month": 0, "1-month lag": 1}[lag_label]
 
     _ref_df = build_disappearance(lag=lag, start_month=start_month)
     _ref_pivot = period_table(_ref_df, start_month=start_month) if not _ref_df.empty else None
@@ -125,63 +134,54 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
     cum = cumulative_by_period(df, start_month=start_month, valid_periods=all_periods)
     cum_sel = cum[[p for p in sel_periods if p in cum.columns]]
 
-    st.plotly_chart(
-        seasonal_chart(wide_sel, "Seasonal pattern", ref_years=ref_periods,
-                       current=current_period, subtitle=ctx),
-        use_container_width=True,
+    show_chart(
+        seasonal_chart(wide_sel, ref_years=ref_periods, current=current_period),
+        "Seasonal pattern", ctx,
     )
 
     c1, c2 = st.columns(2)
     with c1:
-        st.plotly_chart(bar_chart(ytd.index, ytd.values, "YTD trend", subtitle=ctx),
-                         use_container_width=True)
+        show_chart(bar_chart(ytd.index, ytd.values), "YTD trend", ctx)
     with c2:
-        st.plotly_chart(
-            latest_vs_band_chart(wide, current_period, ref_periods,
-                                  f"{current_period} vs Min/Max/Avg", subtitle=f"L{len(ref_periods)}Y · {ctx}"),
-            use_container_width=True,
+        show_chart(
+            latest_vs_band_chart(wide, current_period, ref_periods),
+            f"{current_period} vs Min/Max/Avg", f"L{len(ref_periods)}Y · {ctx}",
         )
 
     c3, c4 = st.columns(2)
     with c3:
-        st.plotly_chart(single_line_chart(roll["Date"], roll["Rolling12mKMT"],
-                                           "Rolling 12-month", subtitle=f"k {y_unit} · {basis_label}"),
-                         use_container_width=True)
+        show_chart(single_line_chart(roll["Date"], roll["Rolling12mKMT"]),
+                    "Rolling 12-month", f"k {y_unit} · {basis_label}")
     with c4:
-        st.plotly_chart(
-            cumulative_chart(cum_sel, "Cumulative", current=current_period, subtitle=ctx),
-            use_container_width=True,
-        )
+        show_chart(cumulative_chart(cum_sel, current=current_period), "Cumulative", ctx)
 
 
 def render_type_bar_views(df_t, pivot_t, current_t, ref_t, all_periods_t, ctx, key_prefix):
-    """Collapsed-by-default bar-chart alternates to the seasonal/YTD/
-    min-max-avg/cumulative line charts, for one coffee type."""
+    """Collapsed-by-default alternate views for one coffee type: Seasonal
+    and Cumulative as line charts (with an average reference line), and
+    Min-Max-Avg-vs-latest / YTD as bars."""
     month_order = period_month_order(start_month)
-    with st.expander(f"{key_prefix} — Cumulative / Seasonal / Min-Max-Avg / YTD (bars)", expanded=False):
+    with st.expander(f"{key_prefix} — Seasonal / Min-Max-Avg / YTD / Cumulative", expanded=False):
         wide_t = pivot_t.set_index("Period")[month_order].T
         rng = period_range if period_range else (all_periods_t[0], all_periods_t[-1])
         sel_t = [p for p in all_periods_t if rng[0] <= p <= rng[1]]
         wide_t_sel = wide_t[sel_t]
         cum_t = cumulative_by_period(df_t, start_month=start_month, valid_periods=all_periods_t)
+        cum_t_sel = cum_t[[p for p in sel_t if p in cum_t.columns]]
         n_months_t = int(df_t.loc[df_t["Period"] == current_t, "PeriodMonthNum"].max())
         ytd_t = ytd_by_period(df_t, n_months_t, start_month=start_month, valid_periods=all_periods_t)
 
         b1, b2 = st.columns(2)
         with b1:
-            st.plotly_chart(seasonal_bar_chart(wide_t_sel, "Seasonal (bars)", current=current_t, subtitle=ctx),
-                             use_container_width=True)
+            show_chart(seasonal_chart(wide_t_sel, ref_years=ref_t, current=current_t), "Seasonal pattern", ctx)
         with b2:
-            st.plotly_chart(latest_vs_avg_bar_chart(wide_t, current_t, ref_t, f"{current_t} vs Avg (bars)",
-                                                      subtitle=f"L{len(ref_t)}Y · {ctx}"),
-                             use_container_width=True)
+            show_chart(latest_vs_avg_bar_chart(wide_t, current_t, ref_t),
+                       f"{current_t} vs Avg (bars)", f"L{len(ref_t)}Y · {ctx}")
         b3, b4 = st.columns(2)
         with b3:
-            st.plotly_chart(bar_chart(ytd_t.index, ytd_t.values, "YTD trend (bars)", subtitle=ctx),
-                             use_container_width=True)
+            show_chart(bar_chart(ytd_t.index, ytd_t.values), "YTD trend (bars)", ctx)
         with b4:
-            st.plotly_chart(cumulative_bar_chart(cum_t, current_t, "Cumulative (bars)", subtitle=ctx),
-                             use_container_width=True)
+            show_chart(cumulative_chart(cum_t_sel, current=current_t), "Cumulative", ctx)
 
 
 TYPE_FOOTNOTE = (
@@ -193,9 +193,7 @@ TYPE_FOOTNOTE = (
     "month's classified mix.\n\n"
     "**Exports** aren't origin-attributable (the TDM partner field is the destination, not "
     "the origin), so the same month's import-side type mix is applied to Exports too, as an "
-    "approximation — Europe is assumed to re-export roughly the type mix it's currently holding. "
-    "The Partner x Month tables below apply this same rule: Imports are true origin-level type "
-    "splits, Exports use the period's blended ratio applied uniformly across destinations."
+    "approximation — Europe is assumed to re-export roughly the type mix it's currently holding."
 )
 
 tab_disapp, tab_type, tab_stocks = st.tabs(["Disappearance", "Arabica / Robusta", "ECF Stocks"])
@@ -237,29 +235,6 @@ with tab_type:
         d["Disappearance"] = to_unit(d["Disappearance"], unit_label)
         type_dfs[t] = d
 
-    ref_pivot_t = period_table(type_dfs["Robusta"], start_month=start_month)
-    ref_periods_t = ref_pivot_t["Period"].tolist()
-
-    # ── Partner x Month (top of this view) ──────────────────────────────────
-    st.markdown('<p class="coffee-caption" style="font-weight:600;color:#52514e;">'
-                'Partner × Month, by type</p>', unsafe_allow_html=True)
-    pcol1, pcol2 = st.columns([1.4, 4.6])
-    with pcol1:
-        partner_period = st.selectbox("Period", ref_periods_t[::-1], key="partner_period")
-    for flow in ("Imports", "Exports"):
-        rob_m, ara_m, month_cols = partner_type_matrix(flow, partner_period, start_month=start_month, top_n=12)
-        rob_m = to_unit(rob_m, unit_label)
-        ara_m = to_unit(ara_m, unit_label)
-        st.markdown(
-            partner_type_table_html(
-                rob_m, ara_m, month_cols,
-                title=f"{flow} by partner · {partner_period}",
-                subtitle=f"Top 12 partners by volume · {y_unit}"
-                         + ("" if flow == "Imports" else " · type split is a period-blended approximation"),
-            ),
-            unsafe_allow_html=True,
-        )
-
     win_col, _ = st.columns([2, 4])
     with win_col:
         window_label = st.radio("Rolling window", ["1m", "3m", "6m", "12m"], horizontal=True,
@@ -268,13 +243,9 @@ with tab_type:
     rolling_series = {t: (r["Date"], r["Rolling"]) for t, d in type_dfs.items()
                        for r in [rolling_window(d, window)]}
 
-    st.plotly_chart(
-        rolling_multi_chart(
-            rolling_series, window,
-            f"Rolling {window_label} disappearance",
-            subtitle=f"Robusta vs Arabica · {y_unit}",
-        ),
-        use_container_width=True,
+    show_chart(
+        rolling_multi_chart(rolling_series),
+        f"Rolling {window_label} disappearance", f"Robusta vs Arabica · {y_unit}",
     )
 
     for t in ("Robusta", "Arabica"):
@@ -325,22 +296,17 @@ with tab_stocks:
     change_col = "BagsChange" if col == "Bags" else "StockChange"
     s1, s2 = st.columns(2)
     with s1:
-        st.plotly_chart(
-            diverging_bar_chart(stocks["Date"], stocks[change_col],
-                                 f"{type_} — month-over-month change", subtitle=y_unit),
-            use_container_width=True,
-        )
+        show_chart(diverging_bar_chart(stocks["Date"], stocks[change_col]),
+                   f"{type_} — month-over-month change", y_unit)
     with s2:
         total = stocks_total_series(unit=unit_label)
-        st.plotly_chart(
-            two_line_chart(total["Date"], total["Level"], "Total Europe",
-                           total["RollingAvg"], "12m average",
-                           "Total Europe stocks & 12m average", subtitle=y_unit),
-            use_container_width=True,
+        show_chart(
+            two_line_chart(total["Date"], total["Level"], "Total Europe", total["RollingAvg"], "12m average"),
+            "Total Europe stocks & 12m average", y_unit,
         )
 
     comp = stocks_composition_series(unit=unit_label)
-    st.plotly_chart(
+    show_chart(
         multi_series_chart(
             comp["Date"],
             {
@@ -348,9 +314,8 @@ with tab_stocks:
                 "Natural Arabica": (comp["Natural Arabica"], ORANGE),
                 "Washed Arabica": (comp["Washed Arabica"], AQUA),
             },
-            "Stocks by coffee type", subtitle=y_unit,
         ),
-        use_container_width=True,
+        "Stocks by coffee type", y_unit,
     )
 
     st.caption(

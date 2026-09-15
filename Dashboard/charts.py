@@ -50,29 +50,21 @@ def _year_style(cy, current, previous, pal_state):
     return color, 1.4
 
 
-# A comfortably-sized default — legible axes/legends without a chart
-# fighting its neighbors for attention.
-COMPACT_HEIGHT = 360
+COMPACT_HEIGHT = 340
 
 
-def _title_html(title, subtitle=""):
-    """A brief-but-detailed header: bold title, one small muted context line
-    (unit / basis / type) underneath — e.g. 'Robusta Disappearance' +
-    'Crop Year · MT · same month'."""
-    if not subtitle:
-        return f"<b>{title}</b>"
-    return f"<b>{title}</b><br><span style='font-size:11px;color:{MUTED}'>{subtitle}</span>"
-
-
-def _base_layout(title, height=COMPACT_HEIGHT, y_suffix="", subtitle=""):
-    top_margin = 56 if subtitle else 40
+# No title lives inside the Plotly figure — a Plotly title's position is a
+# fraction of the *whole* figure (paper coordinates), so it's one font-metric
+# surprise away from clipping against the canvas edge (exactly what kept
+# happening here). The title/subtitle instead render as plain DOM text via
+# table_html.chart_header_html(), placed directly above st.plotly_chart —
+# same pattern already used for the HTML tables, and immune to the problem.
+def _base_layout(height=COMPACT_HEIGHT, y_suffix=""):
     return dict(
-        title=dict(text=_title_html(title, subtitle), x=0, xanchor="left", y=0.98, yanchor="top",
-                   font=dict(size=15, color=INK, family="system-ui, -apple-system, Segoe UI, sans-serif")),
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
         font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif", size=11),
-        margin=dict(l=54, r=16, t=top_margin, b=36),
+        margin=dict(l=54, r=16, t=12, b=36),
         height=height,
         showlegend=False,
         hovermode="x unified",
@@ -96,7 +88,7 @@ def recent_columns(columns, n=6):
     return cols[-n:] if len(cols) > n else cols
 
 
-def seasonal_chart(wide, title, ref_years=None, current=None, previous=None, height=COMPACT_HEIGHT, subtitle=""):
+def seasonal_chart(wide, ref_years=None, current=None, previous=None, height=COMPACT_HEIGHT):
     """One line per selected crop year (x = crop month), plus a Min/Max/Avg
     band from `ref_years` (last N *complete* crop years) behind them —
     mirrors TDM/files/app.py's Seasonal chart: latest year bold dark,
@@ -123,14 +115,14 @@ def seasonal_chart(wide, title, ref_years=None, current=None, previous=None, hei
         fig.add_trace(go.Scatter(x=wide.index, y=wide[cy], mode="lines+markers", name=str(cy),
                                   line=dict(color=color, width=width), marker=dict(size=4)))
 
-    layout = _base_layout(title, height, subtitle=subtitle)
+    layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def latest_vs_band_chart(wide, current, ref_years, title, height=COMPACT_HEIGHT, subtitle=""):
+def latest_vs_band_chart(wide, current, ref_years, height=COMPACT_HEIGHT):
     """Min/Max/Avg band from ref_years, with ONLY the current (latest) year's
     line drawn on top — mirrors TDM's separate 'Min/Max/Avg vs Latest' panel,
     a cleaner 'is this year normal' read than the full multi-year overlay."""
@@ -147,70 +139,55 @@ def latest_vs_band_chart(wide, current, ref_years, title, height=COMPACT_HEIGHT,
     if current in wide.columns:
         fig.add_trace(go.Scatter(x=wide.index, y=wide[current], mode="lines+markers", name=str(current),
                                   line=dict(color=YEAR_CURRENT, width=2.5), marker=dict(size=6)))
-    layout = _base_layout(title, height, subtitle=subtitle)
+    layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def cumulative_chart(cum_wide, title, current=None, previous=None, height=COMPACT_HEIGHT, subtitle=""):
-    """Cumulative sum per crop year (x = crop month) — same current/previous/
-    palette color scheme as seasonal_chart, no band (matches TDM's Cumulative
-    panel, which is per-year lines only)."""
+def cumulative_chart(cum_wide, current=None, previous=None, show_avg=True, height=COMPACT_HEIGHT):
+    """Cumulative sum per crop year (x = crop month), same current/previous/
+    palette color scheme as seasonal_chart, plus an Avg line across all
+    plotted years (show_avg) so the current year's build reads against a
+    baseline, not just against a wall of peer lines."""
     cols = list(cum_wide.columns)
     current = current or cols[-1]
     previous = previous or (cols[-2] if len(cols) > 1 else None)
     fig = go.Figure()
+    if show_avg and len(cols) > 1:
+        avg = cum_wide.mean(axis=1, skipna=True)
+        fig.add_trace(go.Scatter(x=cum_wide.index, y=avg, name=f"Avg ({len(cols)}y)",
+                                  mode="lines", line=dict(color=BAND_AVG, width=1.4, dash="dot")))
     pal_state = {"i": 0}
     for cy in cols:
         color, width = _year_style(cy, current, previous, pal_state)
         fig.add_trace(go.Scatter(x=cum_wide.index, y=cum_wide[cy], mode="lines+markers", name=str(cy),
                                   line=dict(color=color, width=width), marker=dict(size=4)))
-    layout = _base_layout(title, height, subtitle=subtitle)
+    layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def single_line_chart(x, y, title, color=BLUE, height=COMPACT_HEIGHT, y_suffix="", subtitle=""):
+def single_line_chart(x, y, color=BLUE, height=COMPACT_HEIGHT, y_suffix=""):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(color=color, width=2)))
-    fig.update_layout(**_base_layout(title, height, y_suffix, subtitle=subtitle))
+    fig.update_layout(**_base_layout(height, y_suffix))
     return fig
 
 
-def bar_chart(x, y, title, color=BLUE, height=COMPACT_HEIGHT, y_suffix="", subtitle=""):
-    """Single-series bar chart — used for YTD trend and Cumulative-as-bars,
-    where a plain column reads faster than a line for one series per period."""
+def bar_chart(x, y, color=BLUE, height=COMPACT_HEIGHT, y_suffix=""):
+    """Single-series bar chart — used for YTD trend, where a plain column
+    reads faster than a line for one series per period."""
     fig = go.Figure()
     fig.add_trace(go.Bar(x=x, y=y, marker_color=color, marker_line_width=0))
-    fig.update_layout(**_base_layout(title, height, y_suffix, subtitle=subtitle))
+    fig.update_layout(**_base_layout(height, y_suffix))
     return fig
 
 
-def seasonal_bar_chart(wide, title, current=None, previous=None, n_years=4, height=COMPACT_HEIGHT, subtitle=""):
-    """Bar-chart version of seasonal_chart: grouped columns per month, one
-    group-member per recent year (capped at n_years so the groups stay
-    legible), same current/previous/palette color scheme."""
-    cols = recent_columns(list(wide.columns), n_years)
-    current = current or cols[-1]
-    previous = previous or (cols[-2] if len(cols) > 1 else None)
-    fig = go.Figure()
-    pal_state = {"i": 0}
-    for cy in cols:
-        color, _ = _year_style(cy, current, previous, pal_state)
-        fig.add_trace(go.Bar(x=wide.index, y=wide[cy], name=str(cy), marker_color=color, marker_line_width=0))
-    layout = _base_layout(title, height, subtitle=subtitle)
-    layout["showlegend"] = True
-    layout["legend"] = _legend()
-    layout["barmode"] = "group"
-    fig.update_layout(**layout)
-    return fig
-
-
-def latest_vs_avg_bar_chart(wide, current, ref_years, title, height=COMPACT_HEIGHT, subtitle=""):
+def latest_vs_avg_bar_chart(wide, current, ref_years, height=COMPACT_HEIGHT):
     """Bar-chart version of latest_vs_band_chart: current period vs the
     L{n}Y average, grouped columns per month (min/max don't read as bars, so
     this keeps the 'is it normal' comparison to current-vs-average)."""
@@ -220,7 +197,7 @@ def latest_vs_avg_bar_chart(wide, current, ref_years, title, height=COMPACT_HEIG
     fig.add_trace(go.Bar(x=wide.index, y=avg, name=f"Avg (L{len(ref_years)}Y)", marker_color=BASELINE, marker_line_width=0))
     if current in wide.columns:
         fig.add_trace(go.Bar(x=wide.index, y=wide[current], name=str(current), marker_color=YEAR_CURRENT, marker_line_width=0))
-    layout = _base_layout(title, height, subtitle=subtitle)
+    layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     layout["barmode"] = "group"
@@ -228,58 +205,45 @@ def latest_vs_avg_bar_chart(wide, current, ref_years, title, height=COMPACT_HEIG
     return fig
 
 
-def cumulative_bar_chart(cum_wide, current, title, height=COMPACT_HEIGHT, subtitle=""):
-    """Bar-chart version of cumulative_chart: the current period's
-    cumulative build, month by month, as columns (a multi-year cumulative
-    overlay doesn't read as bars, so this keeps to the one series that
-    matters most)."""
-    fig = go.Figure()
-    if current in cum_wide.columns:
-        fig.add_trace(go.Bar(x=cum_wide.index, y=cum_wide[current], marker_color=YEAR_CURRENT, marker_line_width=0))
-    layout = _base_layout(title, height, subtitle=subtitle)
-    fig.update_layout(**layout)
-    return fig
-
-
-def two_line_chart(x, y1, name1, y2, name2, title, height=COMPACT_HEIGHT, subtitle=""):
+def two_line_chart(x, y1, name1, y2, name2, height=COMPACT_HEIGHT):
     """Two series that share one meaningful axis — e.g. a level and its
     rolling average. Never use this to fake a dual-axis comparison."""
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=y1, mode="lines", name=name1, line=dict(color=BLUE, width=2)))
     fig.add_trace(go.Scatter(x=x, y=y2, mode="lines", name=name2, line=dict(color=MUTED, width=1.5, dash="dot")))
-    layout = _base_layout(title, height, subtitle=subtitle)
+    layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def multi_series_chart(df_x_date, series: dict, title, height=COMPACT_HEIGHT, subtitle=""):
+def multi_series_chart(df_x_date, series: dict, height=COMPACT_HEIGHT):
     """<=4 categorical series sharing one axis, direct-labeled at the line end
     (mandatory once you're at 4 series). `series` = {name: (y_values, color)}."""
     fig = go.Figure()
     for name, (y, color) in series.items():
         fig.add_trace(go.Scatter(x=df_x_date, y=y, mode="lines", name=name, line=dict(color=color, width=2)))
-    layout = _base_layout(title, height, subtitle=subtitle)
+    layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
 
 
-def diverging_bar_chart(x, y, title, height=COMPACT_HEIGHT, subtitle=""):
+def diverging_bar_chart(x, y, height=COMPACT_HEIGHT):
     """A single continuous time series of signed values (stock build/draw) —
     green above zero, red below. One bar per period, chronological — not
     grouped by year, which is what turns this into an unreadable wall."""
     colors = [GOOD if v >= 0 else CRITICAL for v in y]
     fig = go.Figure()
     fig.add_trace(go.Bar(x=x, y=y, marker_color=colors, marker_line_width=0))
-    fig.update_layout(**_base_layout(title, height, subtitle=subtitle))
+    fig.update_layout(**_base_layout(height))
     return fig
 
 
-def rolling_multi_chart(df_by_type: dict, window: int, title, height=COMPACT_HEIGHT + 40, subtitle=""):
-    """Rolling `window`-month Disappearance for 2+ coffee types on one axis —
+def rolling_multi_chart(df_by_type: dict, height=COMPACT_HEIGHT + 40):
+    """Rolling N-month Disappearance for 2+ coffee types on one axis —
     e.g. {'Robusta': (dates, values), 'Arabica': (dates, values)}. Same unit,
     directly comparable, categorical color per type."""
     fig = go.Figure()
@@ -287,7 +251,7 @@ def rolling_multi_chart(df_by_type: dict, window: int, title, height=COMPACT_HEI
     for name, (x, y) in df_by_type.items():
         fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=name,
                                   line=dict(color=colors.get(name, GREEN), width=2)))
-    layout = _base_layout(title, height, subtitle=subtitle)
+    layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
     fig.update_layout(**layout)

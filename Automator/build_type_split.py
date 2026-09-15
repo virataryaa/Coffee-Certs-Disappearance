@@ -10,9 +10,11 @@ best-effort split built from three rules, in priority order:
      crop swings, etc). Instead this pulls Brazil's actual monthly
      Arabica/Robusta split for Europe-bound exports from Cecafe Monthly
      (Belgium/Germany/Italy/Netherlands/Spain/UK — the destinations Cecafe
-     tracks), and applies that ratio to TDM's Brazil-origin import volume.
-     Recent months TDM has but Cecafe hasn't reported yet fall back to the
-     trailing 12-month average ratio.
+     tracks), shifted forward one month (ocean transit — a bag Cecafe logs
+     as exported in month M isn't in TDM's EU import data until ~M+1), and
+     applies that ratio to TDM's Brazil-origin import volume. Recent months
+     TDM has but Cecafe hasn't reported yet fall back to the trailing
+     12-month average ratio.
 
   2. FIXED (locked) — India (60% Robusta / 40% Arabica) and Uganda (80%
      Robusta / 20% Arabica): both structurally mixed, but without a Brazil-
@@ -107,6 +109,16 @@ def brazil_europe_ratio() -> pd.DataFrame:
     g["RobustaShare"] = (g["Robusta"] / total).where(total > 0)
     g = g.reset_index().sort_values(["Year", "Month"])
     g["RobustaShare"] = g["RobustaShare"].ffill()  # covers recent months TDM has, Cecafe doesn't yet
+
+    # Shipping lag: a bag Cecafe records as exported from Brazil in month M
+    # doesn't land in TDM's EU import data until ~month M+1 (ocean transit).
+    # Shift the ratio forward one month so it's matched against the TDM
+    # month it actually describes, not the month it was loaded onto a ship.
+    apply_month = g["Month"] + 1
+    apply_year = g["Year"] + (apply_month > 12).astype(int)
+    apply_month = apply_month.where(apply_month <= 12, apply_month - 12)
+    g["Year"], g["Month"] = apply_year, apply_month
+
     return g[["Year", "Month", "RobustaShare"]].rename(columns={"Year": "YEAR", "Month": "MONTH"})
 
 

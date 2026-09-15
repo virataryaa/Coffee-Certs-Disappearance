@@ -44,6 +44,28 @@ def _flatten(html):
     return "\n".join(line.strip() for line in html.strip().split("\n"))
 
 
+_CHART_HEADER_STYLE = f"""
+<style>
+.coffee-chart-title {{ font-size: 13px; font-weight: 600; color: {INK}; margin: 10px 0 0; }}
+.coffee-chart-subtitle {{ font-size: 10.5px; color: {MUTED}; margin: 0 0 2px; }}
+</style>
+"""
+
+
+def chart_header_html(title, subtitle=""):
+    """Real DOM text for a chart's title/subtitle, rendered via st.markdown
+    directly above st.plotly_chart — a Plotly-internal title's position is a
+    fraction of the whole figure (paper coordinates), so any font-metric
+    mismatch clips it against the canvas edge. Plain HTML never has that
+    problem."""
+    sub = f'<div class="coffee-chart-subtitle">{subtitle}</div>' if subtitle else ""
+    return _flatten(f"""
+    {_CHART_HEADER_STYLE}
+    <div class="coffee-chart-title">{title}</div>
+    {sub}
+    """)
+
+
 _STYLE = f"""
 <style>
 .coffee-table-title {{ font-size: 12px; font-weight: 600; color: {INK}; margin: 0 0 1px; }}
@@ -225,51 +247,6 @@ def stocks_change_table_html(change, avg_row, title, subtitle="", n_years=8):
         avg_cells.append(_chg_cell(avg_row.get(m), vmax_abs))
     body.append(f'<tr><td class="sep" colspan="{len(month_cols) + 1}"></td></tr>')
     body.append("<tr>" + "".join(avg_cells) + "</tr>")
-
-    sub = f'<div class="coffee-table-subtitle">{subtitle}</div>' if subtitle else ""
-    html = f"""
-    {_STYLE}
-    {_HEATMAP_STYLE}
-    <div class="coffee-table-title">{title}</div>
-    {sub}
-    <div class="coffee-hm-wrap">
-    <table class="coffee-hm">{header}{''.join(body)}</table>
-    </div>
-    """
-    return _flatten(html)
-
-
-def partner_type_table_html(rob, ara, month_cols, title, subtitle=""):
-    """Partner x month Blues heatmap, split into a Robusta row and an
-    Arabica row per partner (so both types are visible without a second
-    table), sorted by each partner's combined total, descending."""
-    partners = list(rob.index)
-    totals = (rob.sum(axis=1, skipna=True) + ara.sum(axis=1, skipna=True)).fillna(0)
-    partners = totals.sort_values(ascending=False).index.tolist()
-
-    nums = [float(v) for df in (rob, ara) for row in df.values for v in row if pd.notna(v)]
-    vmin, vmax = (min(nums), max(nums)) if nums else (0.0, 1.0)
-
-    def _blue_bg(v):
-        if pd.isna(v) or vmax == vmin:
-            return GRID
-        return _lerp_hex(_BLUES, (float(v) - vmin) / (vmax - vmin))
-
-    header = '<tr><th class="idx"></th>' + "".join(f"<th>{m}</th>" for m in month_cols) + "<th>Total</th></tr>"
-    body = []
-    for p in partners:
-        for label, df in (("Robusta", rob), ("Arabica", ara)):
-            row_total = df.loc[p].sum(skipna=True) if p in df.index else float("nan")
-            cells = [f'<td class="idx">{p} — {label}</td>']
-            for m in month_cols:
-                v = df.loc[p, m] if p in df.index else float("nan")
-                if pd.isna(v):
-                    cells.append('<td class="blank"></td>')
-                else:
-                    bg = _blue_bg(v)
-                    cells.append(f'<td style="background:{bg};color:{_txt_on(bg)}">{_fmt(v)}</td>')
-            cells.append(f'<td class="total">{_fmt(row_total)}</td>' if pd.notna(row_total) else '<td class="total"></td>')
-            body.append("<tr>" + "".join(cells) + "</tr>")
 
     sub = f'<div class="coffee-table-subtitle">{subtitle}</div>' if subtitle else ""
     html = f"""
