@@ -10,28 +10,38 @@ TDM_EU_PARQUET = DATABASE_DIR / "tdm_coffee_eu.parquet"
 STOCKS_SHEET = "ECF"
 TOTAL_ROW = "Total Europe"
 
-# Aug–Dec 2019 was a one-off ICE Europe certified-stock re-certification event
-# that distorts every month it touches (and the Jan-2020 stock-change reading
+# Aug–Dec 2019 was a one-off ECF certified-stock re-certification event that
+# distorts every month it touches (and the Jan-2020 stock-change reading
 # right after it) — dropped everywhere rather than shown as real seasonality.
 STOCKS_CUTOFF = pd.Timestamp("2020-01-01")
 
-MONTH_NUM = {m: i + 1 for i, m in enumerate(
-    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-)}
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+MONTH_NUM = {m: i + 1 for i, m in enumerate(MONTH_ABBR)}
 
-# Crop year (Oct -> Sep) — same convention as the TDM ingest scripts.
-CROP_MONTH_MAP = {1: "Oct", 2: "Nov", 3: "Dec", 4: "Jan", 5: "Feb", 6: "Mar",
-                  7: "Apr", 8: "May", 9: "Jun", 10: "Jul", 11: "Aug", 12: "Sep"}
-CROP_MONTH_ORDER = [CROP_MONTH_MAP[i] for i in range(1, 13)]
+# Period bases available on the Calendar/Crop-year toggle.
+CALENDAR = 1
+CROP_YEAR = 10
 
 
-def _crop_year(year, month):
-    start = year - 1 if month < 10 else year
+def period_month_order(start_month):
+    return [MONTH_ABBR[(start_month - 1 + i) % 12] for i in range(12)]
+
+
+def period_label(year, month, start_month):
+    if start_month == 1:
+        return str(year)
+    start = year - 1 if month < start_month else year
     return f"{str(start)[2:]}/{str(start + 1)[2:]}"
 
 
-def _crop_month_num(month):
-    return ((month + 2) % 12) + 1
+def period_month_num(month, start_month):
+    return ((month - start_month) % 12) + 1
+
+
+def _period_sort_key(label, start_month):
+    if start_month == 1:
+        return int(label)
+    return int("20" + label.split("/")[0])
 
 
 @st.cache_data(ttl=600)
@@ -58,7 +68,7 @@ def stock_types():
 
 @st.cache_data(ttl=600)
 def load_stocks(type_=TOTAL_ROW):
-    """Monthly ICE Europe certified stocks for one 'Type of Coffee' (MT)."""
+    """Monthly ECF certified stocks for one 'Type of Coffee' (MT)."""
     df = load_stocks_raw()
     df = df[df["Type of Coffee"] == type_].copy()
     df["StockChange"] = df["MT"].diff()
@@ -129,9 +139,10 @@ def load_net_imports():
 
 
 @st.cache_data(ttl=600)
-def build_disappearance(lag: bool):
-    """Merge Net Imports (TDM) with Stocks change (manual certs) and compute
-    monthly Disappearance = Net Imports - Stock Change.
+def build_disappearance(lag: bool, start_month: int = CROP_YEAR):
+    """Merge Net Imports (TDM) with Stocks change (manual ECF certs) and
+    compute monthly Disappearance = Net Imports - Stock Change, labeled on
+    whichever period basis (Calendar = start_month 1, Crop year = 10).
 
     lag=True:  Net Imports is taken from the PRIOR month, matched against the
                CURRENT month's stock change (Net Imports lead stocks by ~1
@@ -149,56 +160,81 @@ def build_disappearance(lag: bool):
         merged["NetImports"] = merged["NetImports"].shift(1)
 
     merged["Disappearance"] = merged["NetImports"] - merged["StockChange"]
-    merged["CropYear"] = merged.apply(lambda r: _crop_year(int(r["Year"]), int(r["MonthNum"])), axis=1)
-    merged["CropMonthNum"] = merged["MonthNum"].apply(_crop_month_num)
-    merged["CropMonth"] = merged["CropMonthNum"].map(CROP_MONTH_MAP)
+    merged["Period"] = merged.apply(lambda r: period_label(int(r["Year"]), int(r["MonthNum"]), start_month), axis=1)
+    merged["PeriodMonthNum"] = merged["MonthNum"].apply(lambda m: period_month_num(m, start_month))
+    merged["PeriodMonth"] = merged["PeriodMonthNum"].map(dict(enumerate(period_month_order(start_month), start=1)))
     return merged.sort_values("Date").reset_index(drop=True)
 
 
-def crop_year_table(df):
-    """Crop-year (rows) x crop-month (Oct..Sep, columns) pivot of Disappearance,
-    plus a Total and % YoY column — feeds the styled HTML table."""
-    pivot = df.pivot_table(index="CropYear", columns="CropMonth", values="Disappearance", aggfunc="sum")
-    pivot = pivot.reindex(columns=CROP_MONTH_ORDER)
-    order = df[["CropYear"]].drop_duplicates()
-    order["start"] = order["CropYear"].apply(lambda s: int("20" + s.split("/")[0]))
-    order = order.sort_values("start")["CropYear"].tolist()
-    pivot = pivot.reindex(order)
-    pivot["Total"] = pivot[CROP_MONTH_ORDER].sum(axis=1, skipna=True, min_count=1)
-    pivot["YoY %"] = pivot["Total"].pct_change() * 100
-    return pivot.reset_index()
+def _drop_leading_incomplete(pivot, month_cols):
+    """Drop period rows from the front that don't have all 12 months
+    populated (the first period after STOCKS_CUTOFF is a partial year, e.g.
+    19/20 only has Feb-Sep 2020 — comparing its Total/YTD against a real
+    full year would be misleading). Never touches the current, still-in-
+    progress period at the end."""
+    while len(pivot) > 1 and pivot.iloc[0][month_cols].isna().any():
+        pivot = pivot.iloc[1:].reset_index(drop=True)
+    return pivot
 
 
-def complete_crop_years(pivot):
-    """Crop years with all 12 months populated — the reference set for
-    Min/Max/Avg bands (an in-progress year would otherwise drag the average
-    down for the months it hasn't reached yet)."""
-    full = pivot.set_index("CropYear")[CROP_MONTH_ORDER]
-    return full.index[full.notna().all(axis=1)].tolist()
+def period_table(df, start_month: int = CROP_YEAR):
+    """Period (rows) x period-month (columns) pivot of Disappearance, plus
+    Total/YoY% and YTD/YoY% columns — feeds the styled HTML table."""
+    month_order = period_month_order(start_month)
+    # aggfunc="mean" (not "sum") — each (Period, PeriodMonth) cell is exactly
+    # one Date's reading, and pivot_table's sum() silently turns an all-NaN
+    # group into 0.0 rather than NaN (mean() doesn't).
+    pivot = df.pivot_table(index="Period", columns="PeriodMonth", values="Disappearance", aggfunc="mean")
+    pivot = pivot.reindex(columns=month_order)
+    order = df[["Period"]].drop_duplicates()
+    order["start"] = order["Period"].apply(lambda s: _period_sort_key(s, start_month))
+    order = order.sort_values("start")["Period"].tolist()
+    pivot = pivot.reindex(order).reset_index()
+    pivot = _drop_leading_incomplete(pivot, month_order)
+    pivot["Total"] = pivot[month_order].sum(axis=1, skipna=True, min_count=1)
+    pivot["Total YoY %"] = pivot["Total"].pct_change() * 100
+    return pivot
 
 
-def ytd_table(df, months_available):
-    """Same-window (Oct..latest reported crop month) YTD total per crop year."""
-    cols = CROP_MONTH_ORDER[:months_available]
-    sub = df[df["CropMonth"].isin(cols)]
-    ytd = sub.groupby("CropYear")["Disappearance"].sum(min_count=1)
-    order = df[["CropYear"]].drop_duplicates()
-    order["start"] = order["CropYear"].apply(lambda s: int("20" + s.split("/")[0]))
-    order = order.sort_values("start")["CropYear"].tolist()
+def ytd_by_period(df, months_available, start_month: int = CROP_YEAR, valid_periods=None):
+    """Same-window (first `months_available` months of the period) YTD total
+    per period — used for the standalone YTD-trend line chart. `valid_periods`
+    should be the already-trimmed period_table() index, so a partial leading
+    period (e.g. 19/20, missing Oct-Dec) doesn't show a misleadingly low YTD."""
+    month_order = period_month_order(start_month)
+    cols = month_order[:months_available]
+    sub = df[df["PeriodMonth"].isin(cols)]
+    ytd = sub.groupby("Period")["Disappearance"].sum(min_count=1)
+    order = df[["Period"]].drop_duplicates()
+    order["start"] = order["Period"].apply(lambda s: _period_sort_key(s, start_month))
+    order = order.sort_values("start")["Period"].tolist()
+    if valid_periods is not None:
+        order = [p for p in order if p in valid_periods]
     return ytd.reindex(order)
 
 
-def cumulative_by_crop_year(df):
-    """Crop-year cumulative sum, month by month (Oct=1 .. Sep=12), for the
-    cumulative line chart."""
-    pivot = df.pivot_table(index="CropMonthNum", columns="CropYear", values="Disappearance", aggfunc="sum")
+def complete_periods(pivot, start_month: int = CROP_YEAR):
+    """Periods with all 12 months populated — the reference set for
+    Min/Max/Avg bands (an in-progress period would otherwise drag the
+    average down for the months it hasn't reached yet)."""
+    month_order = period_month_order(start_month)
+    full = pivot.set_index("Period")[month_order]
+    return full.index[full.notna().all(axis=1)].tolist()
+
+
+def cumulative_by_period(df, start_month: int = CROP_YEAR, valid_periods=None):
+    """Period cumulative sum, month by month, for the cumulative line chart."""
+    month_order = period_month_order(start_month)
+    pivot = df.pivot_table(index="PeriodMonthNum", columns="Period", values="Disappearance", aggfunc="mean")
     pivot = pivot.reindex(range(1, 13))
-    pivot.index = [CROP_MONTH_MAP[i] for i in pivot.index]
+    pivot.index = month_order
     cum = pivot.cumsum(skipna=True)
-    order = df[["CropYear"]].drop_duplicates()
-    order["start"] = order["CropYear"].apply(lambda s: int("20" + s.split("/")[0]))
-    order = order.sort_values("start")["CropYear"].tolist()
-    return cum[order]
+    order = df[["Period"]].drop_duplicates()
+    order["start"] = order["Period"].apply(lambda s: _period_sort_key(s, start_month))
+    order = order.sort_values("start")["Period"].tolist()
+    if valid_periods is not None:
+        order = [p for p in order if p in valid_periods]
+    return cum[[p for p in order if p in cum.columns]]
 
 
 def rolling_12m(df):

@@ -1,9 +1,9 @@
 import streamlit as st
 
 from data_loader import (
-    build_disappearance, crop_year_table, ytd_table, cumulative_by_crop_year,
-    rolling_12m, complete_crop_years, CROP_MONTH_ORDER, TDM_EU_PARQUET, STOCKS_PATH,
-    stock_types, stocks_calendar_table, load_stocks,
+    build_disappearance, period_table, ytd_by_period, cumulative_by_period,
+    rolling_12m, complete_periods, period_month_order, CALENDAR, CROP_YEAR,
+    TDM_EU_PARQUET, stock_types, stocks_calendar_table, load_stocks,
     stocks_total_series, stocks_composition_series,
 )
 from charts import (
@@ -11,7 +11,7 @@ from charts import (
     single_line_chart, two_line_chart, multi_series_chart, diverging_bar_chart,
     BLUE, ORANGE, AQUA,
 )
-from table_html import heatmap_table_html, ytd_summary_table_html, stocks_level_table_html
+from table_html import heatmap_table_html, stocks_level_table_html
 
 st.set_page_config(page_title="Coffee Certs & Disappearance", layout="wide")
 
@@ -22,7 +22,7 @@ CSS = """
 h1.coffee-title { font-size: 20px; font-weight: 700; color: #0b0b0b; margin: 0; }
 p.coffee-caption { font-size: 12px; color: #898781; margin: 2px 0 18px; }
 
-/* Segmented-button styling for st.radio, used as a lag/type toggle */
+/* Segmented-button styling for st.radio, used as toggle controls */
 div[data-testid="stRadio"] > div[role="radiogroup"] {
     display: inline-flex; gap: 2px; background: #f2f1ee; padding: 3px;
     border-radius: 8px; width: fit-content;
@@ -46,15 +46,20 @@ tab_disapp, tab_stocks = st.tabs(["Disappearance", "ECF Stocks"])
 
 # ── Disappearance ─────────────────────────────────────────────────────────────
 with tab_disapp:
-    head_col, toggle_col = st.columns([5, 1.3])
+    head_col, basis_col, toggle_col = st.columns([4, 2, 1.6])
     with head_col:
         st.markdown('<h1 class="coffee-title">Europe Coffee Disappearance</h1>', unsafe_allow_html=True)
-        st.markdown('<p class="coffee-caption">Net Imports (TDM) minus ICE-certified stock change</p>',
+        st.markdown('<p class="coffee-caption">Net Imports (TDM) minus ECF stock change</p>',
                     unsafe_allow_html=True)
+    with basis_col:
+        basis_label = st.radio("Basis", ["Crop Year", "Calendar Year"], horizontal=True,
+                                label_visibility="collapsed", key="basis_radio")
+        st.caption("Crop year = Oct-Sep" if basis_label == "Crop Year" else "")
     with toggle_col:
         lag_label = st.radio("Timing", ["Same month", "1-month lag"], horizontal=True,
                               label_visibility="collapsed", key="lag_radio")
     lag = lag_label == "1-month lag"
+    start_month = CALENDAR if basis_label == "Calendar Year" else CROP_YEAR
 
     if not TDM_EU_PARQUET.exists():
         st.warning(
@@ -63,65 +68,60 @@ with tab_disapp:
         )
         st.stop()
 
-    df = build_disappearance(lag=lag)
+    df = build_disappearance(lag=lag, start_month=start_month)
     if df.empty:
-        st.warning("No overlapping months between TDM Net Imports and the Coffee Stocks file yet.")
+        st.warning("No overlapping months between TDM Net Imports and the ECF Stocks file yet.")
         st.stop()
 
-    pivot = crop_year_table(df)
-    n_months = int(df.sort_values("Date")["CropMonthNum"].iloc[-1])
-    current_crop_year = pivot["CropYear"].iloc[-1]
+    month_order = period_month_order(start_month)
+    pivot = period_table(df, start_month=start_month)
+    all_periods = pivot["Period"].tolist()
+    current_period = all_periods[-1]
+    n_months = int(df.loc[df["Period"] == current_period, "PeriodMonthNum"].max())
 
-    ytd = ytd_table(df, n_months)
-    cum = cumulative_by_crop_year(df)
+    ytd = ytd_by_period(df, n_months, start_month=start_month, valid_periods=all_periods)
+    ref_periods = complete_periods(pivot, start_month=start_month)[-10:]
     roll = rolling_12m(df)
 
-    all_years = pivot["CropYear"].tolist()
-    ref_years = complete_crop_years(pivot)[-10:]
-
-    default_start = all_years[max(0, len(all_years) - 6)]
-    year_range = st.select_slider(
-        "Crop year range (charts below)", options=all_years,
-        value=(default_start, all_years[-1]),
+    period_range = st.select_slider(
+        "Period range (charts below)", options=all_periods,
+        value=(all_periods[0], all_periods[-1]),
     )
-    sel_years = [y for y in all_years if year_range[0] <= y <= year_range[1]]
+    sel_periods = [p for p in all_periods if period_range[0] <= p <= period_range[1]]
 
     st.markdown(
         heatmap_table_html(
-            pivot, CROP_MONTH_ORDER,
-            title=f"Monthly disappearance by crop year ({lag_label.lower()})",
-            subtitle="Disappearance = Net Imports (TDM) − Stock Change (ICE Europe certs). Units: MT.",
-            ref_years=ref_years, current_year=current_crop_year, ytd_months=n_months,
+            pivot, month_order,
+            title=f"Monthly disappearance by {basis_label.split(' (')[0].lower()} ({lag_label.lower()})",
+            subtitle="Disappearance = Net Imports (TDM) − Stock Change (ECF certified stocks). Units: MT.",
+            ref_years=ref_periods, current_period=current_period, ytd_months=n_months,
         ),
         unsafe_allow_html=True,
     )
     st.caption(
-        f"Blue shade = magnitude (table-wide). vs Avg% = current crop year vs the "
-        f"average of the last {len(ref_years)} complete crop years."
+        f"Blue shade = magnitude (table-wide). vs Avg% = current period vs the "
+        f"average of the last {len(ref_periods)} complete periods."
     )
 
-    wide = pivot.set_index("CropYear")[CROP_MONTH_ORDER].T
-    wide_sel = wide[sel_years]
-    cum_sel = cum[[y for y in sel_years if y in cum.columns]]
+    wide = pivot.set_index("Period")[month_order].T
+    wide_sel = wide[sel_periods]
+    cum = cumulative_by_period(df, start_month=start_month, valid_periods=all_periods)
+    cum_sel = cum[[p for p in sel_periods if p in cum.columns]]
 
-    col_a, col_b = st.columns([1, 2.4])
-    with col_a:
-        st.markdown(ytd_summary_table_html(ytd, title="YTD by crop year", unit="(MT)"), unsafe_allow_html=True)
-    with col_b:
-        st.plotly_chart(
-            seasonal_chart(wide_sel, "Seasonal pattern by crop year", ref_years=ref_years,
-                           current=current_crop_year),
-            use_container_width=True,
-        )
+    st.plotly_chart(
+        seasonal_chart(wide_sel, "Seasonal pattern by period", ref_years=ref_periods,
+                       current=current_period),
+        use_container_width=True,
+    )
 
     c1, c2 = st.columns(2)
     with c1:
-        st.plotly_chart(single_line_chart(ytd.index, ytd.values, "YTD trend by crop year"),
+        st.plotly_chart(single_line_chart(ytd.index, ytd.values, "YTD trend by period"),
                          use_container_width=True)
     with c2:
         st.plotly_chart(
-            latest_vs_band_chart(wide, current_crop_year, ref_years,
-                                  f"{current_crop_year} vs Min/Max/Avg (L{len(ref_years)}Y)"),
+            latest_vs_band_chart(wide, current_period, ref_periods,
+                                  f"{current_period} vs Min/Max/Avg (L{len(ref_periods)}Y)"),
             use_container_width=True,
         )
 
@@ -132,33 +132,14 @@ with tab_disapp:
                          use_container_width=True)
     with c4:
         st.plotly_chart(
-            cumulative_chart(cum_sel, "Cumulative by crop year", current=current_crop_year),
+            cumulative_chart(cum_sel, "Cumulative by period", current=current_period),
             use_container_width=True,
-        )
-
-    with st.expander("Data sources & methodology"):
-        st.markdown(
-            f"""
-            - **Net Imports** = TDM Imports − TDM Exports for "EU 28 External Trade" (E28,
-              the pre-aggregated extra-EU bloc reporter) + UK + Norway + Switzerland
-              (all coffee HS codes: green, roast & ground, instant), from `{TDM_EU_PARQUET.name}`.
-            - **Stock Change** = month-over-month change in ICE Europe certified stocks,
-              "Total Europe" row, from `{STOCKS_PATH.name}` (sheet: ECF).
-            - **Disappearance** = Net Imports − Stock Change.
-            - **1-month lag**: pairs the prior month's Net Imports with the current month's
-              Stock Change (customs data vs. certification timing).
-            - Data starts January 2020 everywhere — Aug–Dec 2019 was a one-off ICE Europe
-              certified-stock re-certification event that contaminates both that period and
-              the stock-change reading right after it, so it's dropped rather than shown.
-            - The crop-year range slider defaults to the last 6 years; widen it for the
-              full 2020-onward history.
-            """
         )
 
 # ── ECF Stocks ────────────────────────────────────────────────────────────────
 with tab_stocks:
-    st.markdown('<h1 class="coffee-title">ICE Europe Certified Stocks</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="coffee-caption">Monthly certified stocks by coffee type, 60kg bags — data from Jan 2020</p>',
+    st.markdown('<h1 class="coffee-title">ECF Stocks</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="coffee-caption">Monthly ECF certified stocks by coffee type, 60kg bags — data from Jan 2020</p>',
                 unsafe_allow_html=True)
 
     type_ = st.radio("Type of Coffee", stock_types(), horizontal=True, key="stock_type")
@@ -202,6 +183,6 @@ with tab_stocks:
     )
 
     st.caption(
-        "Data starts January 2020 — Aug–Dec 2019 was a one-off ICE Europe "
-        "certified-stock re-certification event, dropped rather than shown as real seasonality."
+        "Data starts January 2020 — Aug–Dec 2019 was a one-off ECF certified-stock "
+        "re-certification event, dropped rather than shown as real seasonality."
     )
