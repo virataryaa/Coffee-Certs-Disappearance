@@ -3,16 +3,17 @@ import streamlit as st
 
 from data_loader import (
     build_disappearance, crop_year_table, ytd_table, cumulative_by_crop_year,
-    rolling_12m, CROP_MONTH_ORDER, TDM_EU_PARQUET, STOCKS_PATH,
+    rolling_12m, complete_crop_years, CROP_MONTH_ORDER, TDM_EU_PARQUET, STOCKS_PATH,
     stock_types, stocks_calendar_table, load_stocks,
     stocks_total_series, stocks_composition_series,
 )
 from charts import (
-    emphasis_line_chart, band_chart, single_line_chart, two_line_chart,
-    multi_series_chart, diverging_bar_chart, BLUE, ORANGE, AQUA,
+    seasonal_chart, cumulative_chart, latest_vs_band_chart,
+    single_line_chart, two_line_chart, multi_series_chart, diverging_bar_chart,
+    BLUE, ORANGE, AQUA,
 )
 from table_html import (
-    disappearance_table_html, ytd_summary_table_html, stocks_level_table_html,
+    heatmap_table_html, ytd_summary_table_html, stocks_level_table_html,
     stat_tile_row_html,
 )
 
@@ -81,22 +82,41 @@ with tab_disapp:
         unsafe_allow_html=True,
     )
 
+    all_years = pivot["CropYear"].tolist()
+    ref_years = complete_crop_years(pivot)[-10:]
+
+    default_start = all_years[max(0, len(all_years) - 6)]
+    year_range = st.select_slider(
+        "Crop year range (charts below)", options=all_years,
+        value=(default_start, all_years[-1]),
+    )
+    sel_years = [y for y in all_years if year_range[0] <= y <= year_range[1]]
+
     st.markdown(
-        disappearance_table_html(
+        heatmap_table_html(
             pivot, CROP_MONTH_ORDER,
             title=f"Monthly disappearance by crop year ({lag_label.lower()})",
             subtitle="Disappearance = Net Imports (TDM) − Stock Change (ICE Europe certs). Units: MT.",
+            ref_years=ref_years, current_year=current_crop_year,
         ),
         unsafe_allow_html=True,
     )
+    st.caption(
+        f"Blue shade = magnitude (table-wide). vs Avg% = current crop year vs the "
+        f"average of the last {len(ref_years)} complete crop years."
+    )
+
+    wide = pivot.set_index("CropYear")[CROP_MONTH_ORDER].T
+    wide_sel = wide[sel_years]
+    cum_sel = cum[[y for y in sel_years if y in cum.columns]]
 
     col_a, col_b = st.columns([1, 2.4])
     with col_a:
         st.markdown(ytd_summary_table_html(ytd, title="YTD by crop year", unit="(MT)"), unsafe_allow_html=True)
     with col_b:
         st.plotly_chart(
-            emphasis_line_chart(pivot.set_index("CropYear")[CROP_MONTH_ORDER].T,
-                                 "Seasonal pattern — last 6 crop years"),
+            seasonal_chart(wide_sel, "Seasonal pattern by crop year", ref_years=ref_years,
+                           current=current_crop_year),
             use_container_width=True,
         )
 
@@ -106,8 +126,8 @@ with tab_disapp:
                          use_container_width=True)
     with c2:
         st.plotly_chart(
-            band_chart(pivot.set_index("CropYear")[CROP_MONTH_ORDER].T, current_crop_year,
-                       f"{current_crop_year} vs 5-year min–max band"),
+            latest_vs_band_chart(wide, current_crop_year, ref_years,
+                                  f"{current_crop_year} vs Min/Max/Avg (L{len(ref_years)}Y)"),
             use_container_width=True,
         )
 
@@ -118,7 +138,7 @@ with tab_disapp:
                          use_container_width=True)
     with c4:
         st.plotly_chart(
-            emphasis_line_chart(cum, "Cumulative by crop year — last 6", y_suffix=""),
+            cumulative_chart(cum_sel, "Cumulative by crop year", current=current_crop_year),
             use_container_width=True,
         )
 
@@ -133,10 +153,9 @@ with tab_disapp:
             - **Disappearance** = Net Imports − Stock Change.
             - **1-month lag**: pairs the prior month's Net Imports with the current month's
               Stock Change (customs data vs. certification timing).
-            - Charts show the last 6 crop years by design — a one-off ICE stock
-              re-certification in 2019 produces an extreme outlier month that would
-              otherwise dominate the axis on every chart. The full history is still in
-              the table above.
+            - The crop-year range slider defaults to the last 8 years — Aug 2019–Jan 2020
+              saw a one-off ICE stock re-certification that produces an extreme outlier
+              month; widen the range if you want to include it.
             """
         )
 

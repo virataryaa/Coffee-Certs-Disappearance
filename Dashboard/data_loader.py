@@ -168,6 +168,14 @@ def crop_year_table(df):
     return pivot.reset_index()
 
 
+def complete_crop_years(pivot):
+    """Crop years with all 12 months populated — the reference set for
+    Min/Max/Avg bands (an in-progress year would otherwise drag the average
+    down for the months it hasn't reached yet)."""
+    full = pivot.set_index("CropYear")[CROP_MONTH_ORDER]
+    return full.index[full.notna().all(axis=1)].tolist()
+
+
 def ytd_table(df, months_available):
     """Same-window (Oct..latest reported crop month) YTD total per crop year."""
     cols = CROP_MONTH_ORDER[:months_available]
