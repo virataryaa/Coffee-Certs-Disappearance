@@ -50,9 +50,9 @@ def _year_style(cy, current, previous, pal_state):
     return color, 1.4
 
 
-# Compact by default — dense multi-chart pages read better with small,
-# tightly-margined panels than a handful of oversized ones.
-COMPACT_HEIGHT = 220
+# A comfortably-sized default — legible axes/legends without a chart
+# fighting its neighbors for attention.
+COMPACT_HEIGHT = 360
 
 
 def _title_html(title, subtitle=""):
@@ -61,32 +61,32 @@ def _title_html(title, subtitle=""):
     'Crop Year · MT · same month'."""
     if not subtitle:
         return f"<b>{title}</b>"
-    return f"<b>{title}</b><br><span style='font-size:9.5px;color:{MUTED}'>{subtitle}</span>"
+    return f"<b>{title}</b><br><span style='font-size:11px;color:{MUTED}'>{subtitle}</span>"
 
 
 def _base_layout(title, height=COMPACT_HEIGHT, y_suffix="", subtitle=""):
-    top_margin = 40 if subtitle else 30
+    top_margin = 56 if subtitle else 40
     return dict(
-        title=dict(text=_title_html(title, subtitle), x=0, xanchor="left", y=0.97, yanchor="top",
-                   font=dict(size=12.5, color=INK, family="system-ui, -apple-system, Segoe UI, sans-serif")),
+        title=dict(text=_title_html(title, subtitle), x=0, xanchor="left", y=0.98, yanchor="top",
+                   font=dict(size=15, color=INK, family="system-ui, -apple-system, Segoe UI, sans-serif")),
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
-        font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif", size=10),
-        margin=dict(l=44, r=10, t=top_margin, b=26),
+        font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif", size=11),
+        margin=dict(l=54, r=16, t=top_margin, b=36),
         height=height,
         showlegend=False,
         hovermode="x unified",
-        xaxis=dict(gridcolor=GRID, linecolor=BASELINE, tickfont=dict(color=MUTED, size=9),
+        xaxis=dict(gridcolor=GRID, linecolor=BASELINE, tickfont=dict(color=MUTED, size=10),
                    showgrid=False, zeroline=False),
-        yaxis=dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED, size=9),
+        yaxis=dict(gridcolor=GRID, linecolor=GRID, tickfont=dict(color=MUTED, size=10),
                    tickformat=",.0f", ticksuffix=y_suffix, zeroline=True, zerolinecolor=BASELINE,
                    zerolinewidth=1),
     )
 
 
-def _legend(y=-0.24):
+def _legend(y=-0.18):
     return dict(orientation="h", yanchor="top", y=y, xanchor="left", x=0,
-                bgcolor="rgba(0,0,0,0)", font=dict(size=9, color=INK_SECONDARY))
+                bgcolor="rgba(0,0,0,0)", font=dict(size=10.5, color=INK_SECONDARY))
 
 
 def recent_columns(columns, n=6):
