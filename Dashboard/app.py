@@ -3,24 +3,27 @@ import streamlit as st
 from data_loader import (
     build_disappearance, build_disappearance_by_type, period_table, ytd_by_period,
     cumulative_by_period, rolling_12m, rolling_window, complete_periods, period_month_order,
-    CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col,
+    partner_type_matrix, CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col,
     TDM_EU_PARQUET, ORIGIN_TYPE_SPLIT_PARQUET,
     stock_types, stocks_calendar_table, load_stocks,
     stocks_total_series, stocks_composition_series,
 )
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
-    single_line_chart, two_line_chart, multi_series_chart, diverging_bar_chart,
+    single_line_chart, bar_chart, seasonal_bar_chart, latest_vs_avg_bar_chart, cumulative_bar_chart,
+    two_line_chart, multi_series_chart, diverging_bar_chart,
     BLUE, ORANGE, AQUA,
 )
-from table_html import heatmap_table_html, stocks_level_table_html, stocks_change_table_html
+from table_html import (
+    heatmap_table_html, stocks_level_table_html, stocks_change_table_html, partner_type_table_html,
+)
 
 st.set_page_config(page_title="Coffee Certs & Disappearance", layout="wide")
 
 CSS = """
 <style>
 .stApp { background-color: #fcfcfb; }
-.block-container { max-width: 1400px; padding-top: 1.4rem; }
+.block-container { max-width: 1400px; padding-top: 4rem; }
 h1.coffee-title { font-size: 18px; font-weight: 700; color: #0b0b0b; margin: 0; }
 p.coffee-caption { font-size: 11px; color: #898781; margin: 1px 0 8px; }
 [data-testid="stVerticalBlock"] { gap: 0.5rem; }
@@ -41,7 +44,8 @@ div[data-testid="stRadio"] label:has(input:checked) {
 }
 div[data-testid="stRadio"] label > div:first-child { display: none; }
 div[data-testid="stRadio"] label div[data-testid="stMarkdownContainer"] p { margin: 0; }
-section[data-testid="stSidebar"] .block-container { padding-top: 1.4rem; }
+section[data-testid="stSidebar"] .block-container { padding-top: 2.2rem; }
+section[data-testid="stSidebar"] div[data-testid="stRadio"] > div[role="radiogroup"] { display: flex; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -54,23 +58,30 @@ with st.sidebar:
     basis_label = st.radio("Period basis", ["Crop Year", "Calendar Year"], key="global_basis")
     st.caption("Oct–Sep" if basis_label == "Crop Year" else "Jan–Dec")
     unit_label = st.radio("Unit", [UNIT_MT, UNIT_BAGS], key="global_unit")
+    lag_label = st.radio("Lag", ["Same month", "1-month lag"], key="global_lag")
     start_month = CALENDAR if basis_label == "Calendar Year" else CROP_YEAR
     y_unit = "MT" if unit_label == UNIT_MT else "bags"
+    lag = lag_label == "1-month lag"
+
+    _ref_df = build_disappearance(lag=lag, start_month=start_month)
+    _ref_pivot = period_table(_ref_df, start_month=start_month) if not _ref_df.empty else None
+    if _ref_pivot is not None and not _ref_pivot.empty:
+        _all_periods_global = _ref_pivot["Period"].tolist()
+        period_range = st.select_slider(
+            "Period range (charts)", options=_all_periods_global,
+            value=(_all_periods_global[0], _all_periods_global[-1]), key="global_period_range",
+        )
+    else:
+        period_range = None
 
 
 def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
-    """Shared body for the Disappearance and Arabica/Robusta tabs: lag
-    toggle, the heatmap table, and the six charts, all in the globally
-    chosen period basis + unit. `build_fn(lag, start_month)` returns the
-    merged Net-Imports/Stock-Change dataframe (still in MT)."""
-    head_col, toggle_col = st.columns([5, 1.6])
-    with head_col:
-        st.markdown(f'<h1 class="coffee-title">{title}</h1>', unsafe_allow_html=True)
-        st.markdown(f'<p class="coffee-caption">{caption}</p>', unsafe_allow_html=True)
-    with toggle_col:
-        lag_label = st.radio("Timing", ["Same month", "1-month lag"], horizontal=True,
-                              label_visibility="collapsed", key=f"{key_prefix}_lag")
-    lag = lag_label == "1-month lag"
+    """Shared body for the Disappearance tab: the heatmap table + charts,
+    all in the globally chosen period basis / unit / lag / period range.
+    `build_fn(lag, start_month)` returns the merged Net-Imports/Stock-Change
+    dataframe (still in MT)."""
+    st.markdown(f'<h1 class="coffee-title">{title}</h1>', unsafe_allow_html=True)
+    st.markdown(f'<p class="coffee-caption">{caption}</p>', unsafe_allow_html=True)
 
     df = build_fn(lag, start_month)
     if df.empty:
@@ -92,11 +103,8 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
     ref_periods = complete_periods(pivot, start_month=start_month)[-10:]
     roll = rolling_12m(df)
 
-    period_range = st.select_slider(
-        "Period range (charts below)", options=all_periods,
-        value=(all_periods[0], all_periods[-1]), key=f"{key_prefix}_range",
-    )
-    sel_periods = [p for p in all_periods if period_range[0] <= p <= period_range[1]]
+    rng = period_range if period_range else (all_periods[0], all_periods[-1])
+    sel_periods = [p for p in all_periods if rng[0] <= p <= rng[1]]
     ctx = f"{basis_label} · {y_unit} · {lag_label.lower()}"
 
     st.markdown(
@@ -107,10 +115,6 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
             ref_years=ref_periods, current_period=current_period, ytd_months=n_months,
         ),
         unsafe_allow_html=True,
-    )
-    st.caption(
-        f"Blue shade = magnitude (table-wide). vs Avg% = current period vs the "
-        f"average of the last {len(ref_periods)} complete periods."
     )
     if footnote:
         with st.expander("Assumptions & methodology", expanded=False):
@@ -129,7 +133,7 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
 
     c1, c2 = st.columns(2)
     with c1:
-        st.plotly_chart(single_line_chart(ytd.index, ytd.values, "YTD trend", subtitle=ctx),
+        st.plotly_chart(bar_chart(ytd.index, ytd.values, "YTD trend", subtitle=ctx),
                          use_container_width=True)
     with c2:
         st.plotly_chart(
@@ -150,6 +154,36 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
         )
 
 
+def render_type_bar_views(df_t, pivot_t, current_t, ref_t, all_periods_t, ctx, key_prefix):
+    """Collapsed-by-default bar-chart alternates to the seasonal/YTD/
+    min-max-avg/cumulative line charts, for one coffee type."""
+    month_order = period_month_order(start_month)
+    with st.expander(f"{key_prefix} — Cumulative / Seasonal / Min-Max-Avg / YTD (bars)", expanded=False):
+        wide_t = pivot_t.set_index("Period")[month_order].T
+        rng = period_range if period_range else (all_periods_t[0], all_periods_t[-1])
+        sel_t = [p for p in all_periods_t if rng[0] <= p <= rng[1]]
+        wide_t_sel = wide_t[sel_t]
+        cum_t = cumulative_by_period(df_t, start_month=start_month, valid_periods=all_periods_t)
+        n_months_t = int(df_t.loc[df_t["Period"] == current_t, "PeriodMonthNum"].max())
+        ytd_t = ytd_by_period(df_t, n_months_t, start_month=start_month, valid_periods=all_periods_t)
+
+        b1, b2 = st.columns(2)
+        with b1:
+            st.plotly_chart(seasonal_bar_chart(wide_t_sel, "Seasonal (bars)", current=current_t, subtitle=ctx),
+                             use_container_width=True)
+        with b2:
+            st.plotly_chart(latest_vs_avg_bar_chart(wide_t, current_t, ref_t, f"{current_t} vs Avg (bars)",
+                                                      subtitle=f"L{len(ref_t)}Y · {ctx}"),
+                             use_container_width=True)
+        b3, b4 = st.columns(2)
+        with b3:
+            st.plotly_chart(bar_chart(ytd_t.index, ytd_t.values, "YTD trend (bars)", subtitle=ctx),
+                             use_container_width=True)
+        with b4:
+            st.plotly_chart(cumulative_bar_chart(cum_t, current_t, "Cumulative (bars)", subtitle=ctx),
+                             use_container_width=True)
+
+
 TYPE_FOOTNOTE = (
     "**Imports** are allocated by origin country (see `Automator/build_type_split.py`): "
     "Brazil uses a dynamic monthly ratio from Cecafe Monthly's Brazil→Europe Type split; "
@@ -159,7 +193,9 @@ TYPE_FOOTNOTE = (
     "month's classified mix.\n\n"
     "**Exports** aren't origin-attributable (the TDM partner field is the destination, not "
     "the origin), so the same month's import-side type mix is applied to Exports too, as an "
-    "approximation — Europe is assumed to re-export roughly the type mix it's currently holding."
+    "approximation — Europe is assumed to re-export roughly the type mix it's currently holding. "
+    "The Partner x Month tables below apply this same rule: Imports are true origin-level type "
+    "splits, Exports use the period's blended ratio applied uniformly across destinations."
 )
 
 tab_disapp, tab_type, tab_stocks = st.tabs(["Disappearance", "Arabica / Robusta", "ECF Stocks"])
@@ -192,21 +228,45 @@ with tab_type:
     st.markdown('<p class="coffee-caption">Net Imports split by origin, minus ECF stock change by type</p>',
                 unsafe_allow_html=True)
 
+    ctx = f"{basis_label} · {y_unit} · {lag_label.lower()}"
+
+    type_dfs = {}
+    for t in ("Robusta", "Arabica"):
+        d = build_disappearance_by_type(t, lag=lag, start_month=start_month)
+        d = d.copy()
+        d["Disappearance"] = to_unit(d["Disappearance"], unit_label)
+        type_dfs[t] = d
+
+    ref_pivot_t = period_table(type_dfs["Robusta"], start_month=start_month)
+    ref_periods_t = ref_pivot_t["Period"].tolist()
+
+    # ── Partner x Month (top of this view) ──────────────────────────────────
+    st.markdown('<p class="coffee-caption" style="font-weight:600;color:#52514e;">'
+                'Partner × Month, by type</p>', unsafe_allow_html=True)
+    pcol1, pcol2 = st.columns([1.4, 4.6])
+    with pcol1:
+        partner_period = st.selectbox("Period", ref_periods_t[::-1], key="partner_period")
+    for flow in ("Imports", "Exports"):
+        rob_m, ara_m, month_cols = partner_type_matrix(flow, partner_period, start_month=start_month, top_n=12)
+        rob_m = to_unit(rob_m, unit_label)
+        ara_m = to_unit(ara_m, unit_label)
+        st.markdown(
+            partner_type_table_html(
+                rob_m, ara_m, month_cols,
+                title=f"{flow} by partner · {partner_period}",
+                subtitle=f"Top 12 partners by volume · {y_unit}"
+                         + ("" if flow == "Imports" else " · type split is a period-blended approximation"),
+            ),
+            unsafe_allow_html=True,
+        )
+
     win_col, _ = st.columns([2, 4])
     with win_col:
         window_label = st.radio("Rolling window", ["1m", "3m", "6m", "12m"], horizontal=True,
                                  label_visibility="collapsed", key="roll_window")
     window = int(window_label.rstrip("m"))
-
-    type_dfs = {}
-    rolling_series = {}
-    for t in ("Robusta", "Arabica"):
-        d = build_disappearance_by_type(t, lag=False, start_month=start_month)
-        d = d.copy()
-        d["Disappearance"] = to_unit(d["Disappearance"], unit_label)
-        type_dfs[t] = d
-        r = rolling_window(d, window)
-        rolling_series[t] = (r["Date"], r["Rolling"])
+    rolling_series = {t: (r["Date"], r["Rolling"]) for t, d in type_dfs.items()
+                       for r in [rolling_window(d, window)]}
 
     st.plotly_chart(
         rolling_multi_chart(
@@ -227,14 +287,16 @@ with tab_type:
         current_t = pivot_t["Period"].iloc[-1]
         n_months_t = int(df_t.loc[df_t["Period"] == current_t, "PeriodMonthNum"].max())
         ref_t = complete_periods(pivot_t, start_month=start_month)[-10:]
+        all_periods_t = pivot_t["Period"].tolist()
         st.markdown(
             heatmap_table_html(
                 pivot_t, month_order,
-                title=f"{t} monthly disappearance ({basis_label} · {y_unit})",
+                title=f"{t} monthly disappearance ({ctx})",
                 ref_years=ref_t, current_period=current_t, ytd_months=n_months_t,
             ),
             unsafe_allow_html=True,
         )
+        render_type_bar_views(df_t, pivot_t, current_t, ref_t, all_periods_t, ctx, f"{t} monthly disappearance")
 
     with st.expander("Assumptions & methodology", expanded=False):
         st.markdown(TYPE_FOOTNOTE)
@@ -287,7 +349,6 @@ with tab_stocks:
                 "Washed Arabica": (comp["Washed Arabica"], AQUA),
             },
             "Stocks by coffee type", subtitle=y_unit,
-            height=260,
         ),
         use_container_width=True,
     )

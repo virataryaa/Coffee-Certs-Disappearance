@@ -17,6 +17,23 @@ if errorlevel 1 (
 )
 
 echo.
+echo ============================================
+echo  Arabica/Robusta type-split refresh
+echo  (rebuilds Brazil's ratio from Cecafe Monthly)
+echo ============================================
+echo.
+
+python build_type_split.py
+if errorlevel 1 (
+    echo.
+    echo  TYPE-SPLIT REFRESH FAILED - see error above.
+    echo  The TDM parquet above still refreshed OK; the type-split
+    echo  parquet was left untouched.
+    pause
+    exit /b 1
+)
+
+echo.
 echo  Done. Review the numbers, then run publish_update.bat
 echo  (one level up) to push Database\ to Streamlit Cloud.
 pause

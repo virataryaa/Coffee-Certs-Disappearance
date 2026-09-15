@@ -214,6 +214,76 @@ def load_robusta_share_monthly():
     return g[["Date", "RobustaShare"]]
 
 
+@st.cache_data(ttl=600)
+def load_export_partner_monthly():
+    """Monthly Export volume (GBE) by PARTNER — PARTNER here is the
+    destination Europe ships to, not an origin, so it can't be typed the
+    way import PARTNER can."""
+    if not TDM_EU_PARQUET.exists():
+        return pd.DataFrame(columns=["PARTNER", "YEAR", "MONTH", "GBE"])
+    raw = pd.read_parquet(TDM_EU_PARQUET, columns=["PARTNER", "YEAR", "MONTH", "FLOW", "GBE"])
+    return raw[raw["FLOW"] == "E"].groupby(["PARTNER", "YEAR", "MONTH"], as_index=False)["GBE"].sum()
+
+
+def partner_type_matrix(flow: str, period: str, start_month: int = CROP_YEAR, top_n: int = 12):
+    """Partner (rows, top `top_n` by volume) x period-month (columns)
+    Robusta/Arabica matrices for one flow ('Imports' or 'Exports') and one
+    period label (e.g. '24/25').
+
+    Imports are origin-attributable (see Automator/build_type_split.py) and
+    read straight from origin_type_split.parquet. Exports are NOT — PARTNER
+    there is the destination — so as an approximation each month's overall
+    import-side Robusta share is applied uniformly across all export
+    partners that month (Europe is assumed to re-export the type mix it's
+    currently holding, not a partner-specific mix).
+
+    Returns (robusta_df, arabica_df, month_order) — both dataframes indexed
+    by PARTNER, columns = month_order, values in GBE-equivalent quantity.
+    """
+    month_order = period_month_order(start_month)
+    month_map = dict(enumerate(month_order, start=1))
+
+    if flow == "Imports":
+        if not ORIGIN_TYPE_SPLIT_PARQUET.exists():
+            empty = pd.DataFrame(columns=month_order)
+            return empty, empty, month_order
+        df = pd.read_parquet(ORIGIN_TYPE_SPLIT_PARQUET)
+        df["Period"] = df.apply(lambda r: period_label(int(r["YEAR"]), int(r["MONTH"]), start_month), axis=1)
+        df["PeriodMonth"] = df["MONTH"].apply(lambda m: period_month_num(m, start_month)).map(month_map)
+        sub = df[df["Period"] == period]
+        total_sort = sub.groupby("PARTNER")["QTY1"].sum().sort_values(ascending=False)
+        top_partners = total_sort.head(top_n).index.tolist()
+        sub = sub[sub["PARTNER"].isin(top_partners)]
+        rob = sub.pivot_table(index="PARTNER", columns="PeriodMonth", values="ROBUSTA_QTY", aggfunc="sum")
+        ara = sub.pivot_table(index="PARTNER", columns="PeriodMonth", values="ARABICA_QTY", aggfunc="sum")
+    else:
+        exp = load_export_partner_monthly()
+        if exp.empty:
+            empty = pd.DataFrame(columns=month_order)
+            return empty, empty, month_order
+        share = load_robusta_share_monthly().copy()
+        share["Year"] = share["Date"].dt.year
+        share["MonthNum"] = share["Date"].dt.month
+        exp = exp.merge(share[["Year", "MonthNum", "RobustaShare"]],
+                         left_on=["YEAR", "MONTH"], right_on=["Year", "MonthNum"], how="left")
+        exp = exp.sort_values(["YEAR", "MONTH"])
+        exp["RobustaShare"] = exp["RobustaShare"].ffill().bfill()
+        exp["ROBUSTA_QTY"] = exp["GBE"] * exp["RobustaShare"]
+        exp["ARABICA_QTY"] = exp["GBE"] * (1 - exp["RobustaShare"])
+        exp["Period"] = exp.apply(lambda r: period_label(int(r["YEAR"]), int(r["MONTH"]), start_month), axis=1)
+        exp["PeriodMonth"] = exp["MONTH"].apply(lambda m: period_month_num(m, start_month)).map(month_map)
+        sub = exp[exp["Period"] == period]
+        total_sort = sub.groupby("PARTNER")["GBE"].sum().sort_values(ascending=False)
+        top_partners = total_sort.head(top_n).index.tolist()
+        sub = sub[sub["PARTNER"].isin(top_partners)]
+        rob = sub.pivot_table(index="PARTNER", columns="PeriodMonth", values="ROBUSTA_QTY", aggfunc="sum")
+        ara = sub.pivot_table(index="PARTNER", columns="PeriodMonth", values="ARABICA_QTY", aggfunc="sum")
+
+    rob = rob.reindex(index=top_partners, columns=month_order)
+    ara = ara.reindex(index=top_partners, columns=month_order)
+    return rob, ara, month_order
+
+
 def load_stocks_by_group(group: str):
     """ECF stocks for 'Robusta' or 'Arabica' (Natural + Washed Arabica
     combined) — same shape as load_stocks() so it drops into the same

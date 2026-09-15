@@ -21,7 +21,7 @@ if errorlevel 1 (
 
 echo.
 echo Step 2/3: Checking for changes ...
-git diff --quiet -- "Database\Coffee Stocks.xlsx" "Database\tdm_coffee_eu.parquet"
+git diff --quiet -- "Database\Coffee Stocks.xlsx" "Database\tdm_coffee_eu.parquet" "Database\origin_type_split.parquet"
 if not errorlevel 1 (
     echo No changes detected - nothing to push.
     pause
@@ -30,7 +30,7 @@ if not errorlevel 1 (
 
 echo.
 echo Step 3/3: Committing and pushing to GitHub ...
-git add "Database\Coffee Stocks.xlsx" "Database\tdm_coffee_eu.parquet"
+git add "Database\Coffee Stocks.xlsx" "Database\tdm_coffee_eu.parquet" "Database\origin_type_split.parquet"
 for /f "delims=" %%i in ('powershell -NoProfile -Command "Get-Date -Format \"yyyy-MM-dd HH:mm\""') do set STAMP=%%i
 git commit -m "Data update %STAMP%"
 if errorlevel 1 (

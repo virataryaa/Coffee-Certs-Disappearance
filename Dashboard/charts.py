@@ -181,6 +181,66 @@ def single_line_chart(x, y, title, color=BLUE, height=COMPACT_HEIGHT, y_suffix="
     return fig
 
 
+def bar_chart(x, y, title, color=BLUE, height=COMPACT_HEIGHT, y_suffix="", subtitle=""):
+    """Single-series bar chart — used for YTD trend and Cumulative-as-bars,
+    where a plain column reads faster than a line for one series per period."""
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=x, y=y, marker_color=color, marker_line_width=0))
+    fig.update_layout(**_base_layout(title, height, y_suffix, subtitle=subtitle))
+    return fig
+
+
+def seasonal_bar_chart(wide, title, current=None, previous=None, n_years=4, height=COMPACT_HEIGHT, subtitle=""):
+    """Bar-chart version of seasonal_chart: grouped columns per month, one
+    group-member per recent year (capped at n_years so the groups stay
+    legible), same current/previous/palette color scheme."""
+    cols = recent_columns(list(wide.columns), n_years)
+    current = current or cols[-1]
+    previous = previous or (cols[-2] if len(cols) > 1 else None)
+    fig = go.Figure()
+    pal_state = {"i": 0}
+    for cy in cols:
+        color, _ = _year_style(cy, current, previous, pal_state)
+        fig.add_trace(go.Bar(x=wide.index, y=wide[cy], name=str(cy), marker_color=color, marker_line_width=0))
+    layout = _base_layout(title, height, subtitle=subtitle)
+    layout["showlegend"] = True
+    layout["legend"] = _legend()
+    layout["barmode"] = "group"
+    fig.update_layout(**layout)
+    return fig
+
+
+def latest_vs_avg_bar_chart(wide, current, ref_years, title, height=COMPACT_HEIGHT, subtitle=""):
+    """Bar-chart version of latest_vs_band_chart: current period vs the
+    L{n}Y average, grouped columns per month (min/max don't read as bars, so
+    this keeps the 'is it normal' comparison to current-vs-average)."""
+    ref = wide[[c for c in ref_years if c in wide.columns]]
+    avg = ref.mean(axis=1, skipna=True)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=wide.index, y=avg, name=f"Avg (L{len(ref_years)}Y)", marker_color=BASELINE, marker_line_width=0))
+    if current in wide.columns:
+        fig.add_trace(go.Bar(x=wide.index, y=wide[current], name=str(current), marker_color=YEAR_CURRENT, marker_line_width=0))
+    layout = _base_layout(title, height, subtitle=subtitle)
+    layout["showlegend"] = True
+    layout["legend"] = _legend()
+    layout["barmode"] = "group"
+    fig.update_layout(**layout)
+    return fig
+
+
+def cumulative_bar_chart(cum_wide, current, title, height=COMPACT_HEIGHT, subtitle=""):
+    """Bar-chart version of cumulative_chart: the current period's
+    cumulative build, month by month, as columns (a multi-year cumulative
+    overlay doesn't read as bars, so this keeps to the one series that
+    matters most)."""
+    fig = go.Figure()
+    if current in cum_wide.columns:
+        fig.add_trace(go.Bar(x=cum_wide.index, y=cum_wide[current], marker_color=YEAR_CURRENT, marker_line_width=0))
+    layout = _base_layout(title, height, subtitle=subtitle)
+    fig.update_layout(**layout)
+    return fig
+
+
 def two_line_chart(x, y1, name1, y2, name2, title, height=COMPACT_HEIGHT, subtitle=""):
     """Two series that share one meaningful axis — e.g. a level and its
     rolling average. Never use this to fake a dual-axis comparison."""
