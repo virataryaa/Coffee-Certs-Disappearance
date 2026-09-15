@@ -120,13 +120,17 @@ def stocks_composition_series():
 @st.cache_data(ttl=600)
 def load_net_imports():
     """Monthly Net Imports (Imports - Exports) for 'Europe' from the TDM
-    EU ingest parquet, summed across all coffee HS codes (green + R&G + instant),
-    in raw quantity (QTY1, metric tons)."""
+    EU ingest parquet, summed across all coffee HS codes (green + R&G +
+    instant) in green-bean-equivalent terms (GBE, metric tons) — matching
+    the basis ECF certified stocks are held in. Raw QTY1 would mix physical
+    forms (roast & ground is ~1.19x denser, instant ~2.6x, by GBE weight),
+    understating Net Imports by a few percent in a way that drifts over
+    time rather than being a constant offset."""
     if not TDM_EU_PARQUET.exists():
         return pd.DataFrame(columns=["Date", "Year", "MonthNum", "Imports", "Exports", "NetImports"])
 
-    raw = pd.read_parquet(TDM_EU_PARQUET, columns=["YEAR", "MONTH", "FLOW", "QTY1"])
-    raw = raw.groupby(["YEAR", "MONTH", "FLOW"], as_index=False)["QTY1"].sum().rename(columns={"QTY1": "QTY"})
+    raw = pd.read_parquet(TDM_EU_PARQUET, columns=["YEAR", "MONTH", "FLOW", "GBE"])
+    raw = raw.groupby(["YEAR", "MONTH", "FLOW"], as_index=False)["GBE"].sum().rename(columns={"GBE": "QTY"})
     pivot = raw.pivot_table(index=["YEAR", "MONTH"], columns="FLOW", values="QTY", fill_value=0.0).reset_index()
     pivot = pivot.rename(columns={"YEAR": "Year", "MONTH": "MonthNum", "E": "Exports", "I": "Imports"})
     for col in ("Imports", "Exports"):
