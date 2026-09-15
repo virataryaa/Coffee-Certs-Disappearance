@@ -10,6 +10,11 @@ TDM_EU_PARQUET = DATABASE_DIR / "tdm_coffee_eu.parquet"
 STOCKS_SHEET = "ECF"
 TOTAL_ROW = "Total Europe"
 
+# Aug–Dec 2019 was a one-off ICE Europe certified-stock re-certification event
+# that distorts every month it touches (and the Jan-2020 stock-change reading
+# right after it) — dropped everywhere rather than shown as real seasonality.
+STOCKS_CUTOFF = pd.Timestamp("2020-01-01")
+
 MONTH_NUM = {m: i + 1 for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 )}
@@ -39,6 +44,7 @@ def load_stocks_raw():
     df["Year"] = df["Year"].astype(int)
     df["Date"] = pd.to_datetime(dict(year=df["Year"], month=df["MonthNum"], day=1))
     df = df.sort_values("Date").drop_duplicates(subset=["Year", "MonthNum", "Type of Coffee"], keep="last")
+    df = df[df["Date"] >= STOCKS_CUTOFF]
     return df.reset_index(drop=True)
 
 

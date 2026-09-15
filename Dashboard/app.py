@@ -1,4 +1,3 @@
-import pandas as pd
 import streamlit as st
 
 from data_loader import (
@@ -12,10 +11,7 @@ from charts import (
     single_line_chart, two_line_chart, multi_series_chart, diverging_bar_chart,
     BLUE, ORANGE, AQUA,
 )
-from table_html import (
-    heatmap_table_html, ytd_summary_table_html, stocks_level_table_html,
-    stat_tile_row_html,
-)
+from table_html import heatmap_table_html, ytd_summary_table_html, stocks_level_table_html
 
 st.set_page_config(page_title="Coffee Certs & Disappearance", layout="wide")
 
@@ -25,6 +21,23 @@ CSS = """
 .block-container { max-width: 1400px; padding-top: 2rem; }
 h1.coffee-title { font-size: 20px; font-weight: 700; color: #0b0b0b; margin: 0; }
 p.coffee-caption { font-size: 12px; color: #898781; margin: 2px 0 18px; }
+
+/* Segmented-button styling for st.radio, used as a lag/type toggle */
+div[data-testid="stRadio"] > div[role="radiogroup"] {
+    display: inline-flex; gap: 2px; background: #f2f1ee; padding: 3px;
+    border-radius: 8px; width: fit-content;
+}
+div[data-testid="stRadio"] label {
+    background: transparent; border-radius: 6px; padding: 6px 14px !important;
+    margin: 0 !important; font-size: 13px; color: #52514e; cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+div[data-testid="stRadio"] label:has(input:checked) {
+    background: #ffffff; color: #0b0b0b; font-weight: 600;
+    box-shadow: 0 1px 3px rgba(11,11,11,0.12);
+}
+div[data-testid="stRadio"] label > div:first-child { display: none; }
+div[data-testid="stRadio"] label div[data-testid="stMarkdownContainer"] p { margin: 0; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -63,25 +76,6 @@ with tab_disapp:
     cum = cumulative_by_crop_year(df)
     roll = rolling_12m(df)
 
-    latest = df.sort_values("Date").iloc[-1]
-    ytd_now, ytd_prev = ytd.iloc[-1], (ytd.iloc[-2] if len(ytd) > 1 else float("nan"))
-    ytd_yoy = (ytd_now / ytd_prev - 1) * 100 if ytd_prev and ytd_prev == ytd_prev else None
-    full_year_idx = -2 if n_months < 12 else -1
-    total_now = pivot["Total"].iloc[full_year_idx]
-    total_yoy = pivot["YoY %"].iloc[full_year_idx]
-    total_year_label = pivot["CropYear"].iloc[full_year_idx]
-
-    st.markdown(
-        stat_tile_row_html([
-            ("Latest month", latest["Disappearance"], "MT", None,
-             latest["Date"].strftime("%b %Y")),
-            (f"Crop YTD ({current_crop_year})", ytd_now, "MT", ytd_yoy,
-             f"Oct–{df.sort_values('Date').iloc[-1]['CropMonth']}, vs same window last year"),
-            (f"Full crop year ({total_year_label})", total_now, "MT", total_yoy, "Oct–Sep total"),
-        ]),
-        unsafe_allow_html=True,
-    )
-
     all_years = pivot["CropYear"].tolist()
     ref_years = complete_crop_years(pivot)[-10:]
 
@@ -97,7 +91,7 @@ with tab_disapp:
             pivot, CROP_MONTH_ORDER,
             title=f"Monthly disappearance by crop year ({lag_label.lower()})",
             subtitle="Disappearance = Net Imports (TDM) − Stock Change (ICE Europe certs). Units: MT.",
-            ref_years=ref_years, current_year=current_crop_year,
+            ref_years=ref_years, current_year=current_crop_year, ytd_months=n_months,
         ),
         unsafe_allow_html=True,
     )
@@ -153,49 +147,34 @@ with tab_disapp:
             - **Disappearance** = Net Imports − Stock Change.
             - **1-month lag**: pairs the prior month's Net Imports with the current month's
               Stock Change (customs data vs. certification timing).
-            - The crop-year range slider defaults to the last 8 years — Aug 2019–Jan 2020
-              saw a one-off ICE stock re-certification that produces an extreme outlier
-              month; widen the range if you want to include it.
+            - Data starts January 2020 everywhere — Aug–Dec 2019 was a one-off ICE Europe
+              certified-stock re-certification event that contaminates both that period and
+              the stock-change reading right after it, so it's dropped rather than shown.
+            - The crop-year range slider defaults to the last 6 years; widen it for the
+              full 2020-onward history.
             """
         )
 
 # ── ECF Stocks ────────────────────────────────────────────────────────────────
 with tab_stocks:
     st.markdown('<h1 class="coffee-title">ICE Europe Certified Stocks</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="coffee-caption">Monthly certified stocks by coffee type, 60kg bags</p>',
+    st.markdown('<p class="coffee-caption">Monthly certified stocks by coffee type, 60kg bags — data from Jan 2020</p>',
                 unsafe_allow_html=True)
 
     type_ = st.radio("Type of Coffee", stock_types(), horizontal=True, key="stock_type")
 
     stocks = load_stocks(type_)
     level, _, _ = stocks_calendar_table(type_, unit="Bags")
-    latest_s = stocks.sort_values("Date").iloc[-1]
-    yoy_s = None
-    same_month_prior = stocks[(stocks["MonthNum"] == latest_s["MonthNum"]) & (stocks["Year"] == latest_s["Year"] - 1)]
-    if not same_month_prior.empty and same_month_prior["Bags"].iloc[0]:
-        yoy_s = (latest_s["Bags"] / same_month_prior["Bags"].iloc[0] - 1) * 100
-
-    st.markdown(
-        stat_tile_row_html([
-            (f"{type_} stocks", latest_s["Bags"], "bags", yoy_s, latest_s["Date"].strftime("%b %Y")),
-            ("Month change", latest_s["BagsChange"], "bags", None, "vs prior month"),
-        ]),
-        unsafe_allow_html=True,
-    )
 
     st.markdown(
         stocks_level_table_html(level, f"{type_} — monthly level (60kg bags)", n_years=8),
         unsafe_allow_html=True,
     )
 
-    recent_cutoff = stocks["Date"].max() - pd.DateOffset(years=6)
-    recent_stocks = stocks[stocks["Date"] > recent_cutoff]
-
     s1, s2 = st.columns(2)
     with s1:
         st.plotly_chart(
-            diverging_bar_chart(recent_stocks["Date"], recent_stocks["BagsChange"],
-                                 f"{type_} — month-over-month change (last 6 years)"),
+            diverging_bar_chart(stocks["Date"], stocks["BagsChange"], f"{type_} — month-over-month change"),
             use_container_width=True,
         )
     with s2:
@@ -223,6 +202,6 @@ with tab_stocks:
     )
 
     st.caption(
-        "Aug 2019–Jan 2020 shows a sharp, temporary drop across all types — a known "
-        "ICE Europe certified-stock re-certification event, not a data error."
+        "Data starts January 2020 — Aug–Dec 2019 was a one-off ICE Europe "
+        "certified-stock re-certification event, dropped rather than shown as real seasonality."
     )

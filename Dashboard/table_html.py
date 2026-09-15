@@ -1,6 +1,6 @@
 import pandas as pd
 
-from charts import GOOD, CRITICAL, GRID, INK, INK_SECONDARY, MUTED, SURFACE
+from charts import GOOD, CRITICAL, GRID, INK, INK_SECONDARY, MUTED
 
 MONTH_ABBR = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
               7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
@@ -89,56 +89,6 @@ def _fmt(v, decimals=0):
     return f"{v:,.{decimals}f}"
 
 
-def _compact(v):
-    """Auto-compact big numbers for a stat-tile value: 1,284 / 12.9K / 4.2M."""
-    if pd.isna(v):
-        return "–"
-    a = abs(v)
-    if a >= 1_000_000:
-        return f"{v / 1_000_000:.2f}M"
-    if a >= 10_000:
-        return f"{v / 1_000:.1f}K"
-    return f"{v:,.0f}"
-
-
-_TILE_STYLE = f"""
-<style>
-.coffee-tile-row {{ display: flex; gap: 12px; margin: 4px 0 20px; flex-wrap: wrap; }}
-.coffee-tile {{ flex: 1 1 180px; border: 1px solid {GRID}; border-radius: 8px;
-               padding: 14px 16px; background: {SURFACE}; }}
-.coffee-tile .label {{ font-size: 11px; font-weight: 600; color: {MUTED};
-               text-transform: uppercase; letter-spacing: 0.03em; }}
-.coffee-tile .value {{ font-size: 24px; font-weight: 700; color: {INK}; margin: 4px 0 2px;
-               font-variant-numeric: normal; }}
-.coffee-tile .delta {{ font-size: 12px; font-weight: 600; }}
-.coffee-tile .desc {{ font-size: 11px; color: {MUTED}; margin-top: 4px; }}
-</style>
-"""
-
-
-def stat_tile_row_html(tiles):
-    """tiles: list of (label, value, unit, delta_pct_or_None, description)."""
-    cards = []
-    for label, value, unit, delta, desc in tiles:
-        delta_html = ""
-        if delta is not None and pd.notna(delta):
-            color = CRITICAL if delta < 0 else GOOD
-            delta_html = f'<div class="delta" style="color:{color};">{delta:+.1f}% YoY</div>'
-        desc_html = f'<div class="desc">{desc}</div>' if desc else ""
-        cards.append(f"""
-        <div class="coffee-tile">
-          <div class="label">{label}</div>
-          <div class="value">{_compact(value)} <span style="font-size:13px;color:{MUTED};">{unit}</span></div>
-          {delta_html}
-          {desc_html}
-        </div>
-        """)
-    return _flatten(f"""
-    {_TILE_STYLE}
-    <div class="coffee-tile-row">{''.join(cards)}</div>
-    """)
-
-
 _HEATMAP_STYLE = f"""
 <style>
 .coffee-hm-wrap {{ overflow-x: auto; border-radius: 6px; border: 1px solid {GRID}; margin: 4px 0 20px; }}
@@ -156,15 +106,21 @@ _HEATMAP_STYLE = f"""
 
 
 def heatmap_table_html(pivot, month_cols, title, subtitle="", total_col="Total", yoy_col="YoY %",
-                        ref_years=None, current_year=None):
+                        ref_years=None, current_year=None, ytd_months=None):
     """Crop-year x month table with the TDM-style conditional formatting:
     a sequential Blues heatmap on the magnitude cells (normalized across the
-    whole table), a highlighted Total column, a red/green YoY% text column,
-    a diverging RdYlGn 'vs Avg%' row under the current year, and italic
-    Min/Max/Avg(L{n}Y) reference rows from `ref_years` (complete years only)."""
+    whole table), highlighted Total + YTD columns, a red/green YoY% text
+    column, a diverging RdYlGn 'vs Avg%' row under the current year, and
+    italic Min/Max/Avg(L{n}Y) reference rows from `ref_years` (complete
+    years only). `ytd_months` = how many of the current crop year's months
+    have been reported — the same window is summed for every row so YTD
+    stays apples-to-apples across years."""
     pivot = pivot.set_index("CropYear") if "CropYear" in pivot.columns else pivot
     rows = list(pivot.index)
     current_year = current_year or rows[-1]
+    ytd_cols = month_cols[:ytd_months] if ytd_months else []
+    ytd_label = f"YTD ({ytd_cols[0]}–{ytd_cols[-1]})" if len(ytd_cols) > 1 else (f"YTD ({ytd_cols[0]})" if ytd_cols else None)
+    n_extra = 2 + (1 if ytd_label else 0)
 
     nums = [float(pivot.loc[r, m]) for r in rows for m in month_cols if pd.notna(pivot.loc[r, m])]
     vmin, vmax = (min(nums), max(nums)) if nums else (0.0, 1.0)
@@ -174,8 +130,8 @@ def heatmap_table_html(pivot, month_cols, title, subtitle="", total_col="Total",
             return GRID
         return _lerp_hex(_BLUES, (float(v) - vmin) / (vmax - vmin))
 
-    header = ('<tr><th class="idx"></th>' + "".join(f"<th>{m}</th>" for m in month_cols)
-              + f'<th>{total_col}</th><th>{yoy_col}</th></tr>')
+    extra_headers = f"<th>{total_col}</th>" + (f"<th>{ytd_label}</th>" if ytd_label else "") + f"<th>{yoy_col}</th>"
+    header = f'<tr><th class="idx"></th>' + "".join(f"<th>{m}</th>" for m in month_cols) + extra_headers + "</tr>"
 
     body = []
     for r in rows:
@@ -189,6 +145,9 @@ def heatmap_table_html(pivot, month_cols, title, subtitle="", total_col="Total",
                 cells.append(f'<td style="background:{bg};color:{_txt_on(bg)}">{_fmt(v)}</td>')
         tv = pivot.loc[r, total_col]
         cells.append(f'<td class="total">{_fmt(tv)}</td>' if pd.notna(tv) else '<td class="total"></td>')
+        if ytd_label:
+            ytdv = pivot.loc[r, ytd_cols].sum(min_count=1)
+            cells.append(f'<td class="total">{_fmt(ytdv)}</td>' if pd.notna(ytdv) else '<td class="total"></td>')
         yv = pivot.loc[r, yoy_col]
         if pd.isna(yv):
             cells.append("<td></td>")
@@ -205,7 +164,7 @@ def heatmap_table_html(pivot, month_cols, title, subtitle="", total_col="Total",
                       if pd.notna(pivot.loc[r, m]) and avg[m] else float("nan") for m in month_cols}
             vals = [v for v in vs_avg.values() if pd.notna(v)]
             vabs = max(abs(min(vals)), abs(max(vals))) if vals else 20.0
-            ncols = len(month_cols) + 2
+            ncols = len(month_cols) + n_extra
             body.append(f'<tr><td class="sep" colspan="{ncols}"></td></tr>')
             cells = [f'<td class="idx" style="font-style:italic">vs Avg (L{len(ref_years)}Y)%</td>']
             for m in month_cols:
@@ -216,12 +175,14 @@ def heatmap_table_html(pivot, month_cols, title, subtitle="", total_col="Total",
                     t = (v + vabs) / (2 * vabs) if vabs else 0.5
                     bg = _lerp_hex(_RDYLGN, t)
                     cells.append(f'<td style="background:{bg};color:{_txt_on(bg)};font-style:italic;font-weight:600">{v:+.1f}%</td>')
-            cells.append('<td class="blank"></td><td class="blank"></td>')
+            cells.append('<td class="blank"></td>' * n_extra)
             body.append("<tr>" + "".join(cells) + "</tr>")
 
     if ref_years:
         complete = pivot.loc[[y for y in ref_years if y in pivot.index], month_cols + [total_col]].astype(float)
-        ncols = len(month_cols) + 2
+        if ytd_label:
+            complete[ytd_label] = pivot.loc[complete.index, ytd_cols].sum(axis=1, min_count=1)
+        ncols = len(month_cols) + n_extra
         body.append(f'<tr><td class="sep" colspan="{ncols}"></td></tr>')
         for label, agg in [(f"Min (L{len(ref_years)}Y)", complete.min()),
                             (f"Max (L{len(ref_years)}Y)", complete.max()),
@@ -229,7 +190,10 @@ def heatmap_table_html(pivot, month_cols, title, subtitle="", total_col="Total",
             cells = [f'<td class="idx ref">{label}</td>']
             for m in month_cols:
                 cells.append(f'<td class="ref">{_fmt(agg[m])}</td>')
-            cells.append(f'<td class="ref total">{_fmt(agg[total_col])}</td><td class="ref"></td>')
+            cells.append(f'<td class="ref total">{_fmt(agg[total_col])}</td>')
+            if ytd_label:
+                cells.append(f'<td class="ref total">{_fmt(agg[ytd_label])}</td>')
+            cells.append('<td class="ref"></td>')
             body.append("<tr>" + "".join(cells) + "</tr>")
 
     sub = f'<div class="coffee-table-subtitle">{subtitle}</div>' if subtitle else ""
