@@ -3,6 +3,5 @@ pandas
 plotly
 openpyxl
 pyarrow
-duckdb
 requests
 python-dotenv

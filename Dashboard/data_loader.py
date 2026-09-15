@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import duckdb
 import pandas as pd
 import streamlit as st
 
@@ -110,12 +109,8 @@ def load_net_imports():
     if not TDM_EU_PARQUET.exists():
         return pd.DataFrame(columns=["Date", "Year", "MonthNum", "Imports", "Exports", "NetImports"])
 
-    q = f"""
-        SELECT YEAR, MONTH, FLOW, SUM(QTY1) AS QTY
-        FROM '{TDM_EU_PARQUET.as_posix()}'
-        GROUP BY YEAR, MONTH, FLOW
-    """
-    raw = duckdb.sql(q).df()
+    raw = pd.read_parquet(TDM_EU_PARQUET, columns=["YEAR", "MONTH", "FLOW", "QTY1"])
+    raw = raw.groupby(["YEAR", "MONTH", "FLOW"], as_index=False)["QTY1"].sum().rename(columns={"QTY1": "QTY"})
     pivot = raw.pivot_table(index=["YEAR", "MONTH"], columns="FLOW", values="QTY", fill_value=0.0).reset_index()
     pivot = pivot.rename(columns={"YEAR": "Year", "MONTH": "MonthNum", "E": "Exports", "I": "Imports"})
     for col in ("Imports", "Exports"):
