@@ -6,6 +6,7 @@ import streamlit as st
 DATABASE_DIR = Path(__file__).resolve().parent.parent / "Database"
 STOCKS_PATH = DATABASE_DIR / "Coffee Stocks.xlsx"
 TDM_EU_PARQUET = DATABASE_DIR / "tdm_coffee_eu.parquet"
+ORIGIN_TYPE_SPLIT_PARQUET = DATABASE_DIR / "origin_type_split.parquet"
 
 STOCKS_SHEET = "ECF"
 TOTAL_ROW = "Total Europe"
@@ -142,23 +143,15 @@ def load_net_imports():
     return pivot[["Date", "Year", "MonthNum", "Imports", "Exports", "NetImports"]]
 
 
-@st.cache_data(ttl=600)
-def build_disappearance(lag: bool, start_month: int = CROP_YEAR):
-    """Merge Net Imports (TDM) with Stocks change (manual ECF certs) and
-    compute monthly Disappearance = Net Imports - Stock Change, labeled on
-    whichever period basis (Calendar = start_month 1, Crop year = 10).
+def _finalize_disappearance(merged, lag: bool, start_month: int):
+    """Shared tail end of build_disappearance() / build_disappearance_by_type():
+    apply the optional 1-month lag, compute Disappearance, and label periods.
 
     lag=True:  Net Imports is taken from the PRIOR month, matched against the
                CURRENT month's stock change (Net Imports lead stocks by ~1
                month in customs reporting vs certification).
     lag=False: same-month Net Imports and Stock Change.
     """
-    stocks = load_stocks()
-    net = load_net_imports()
-    if net.empty:
-        return pd.DataFrame(columns=["Date", "Year", "MonthNum", "NetImports", "StockChange", "Disappearance"])
-
-    merged = stocks.merge(net[["Date", "NetImports"]], on="Date", how="inner")
     if lag:
         merged = merged.sort_values("Date")
         merged["NetImports"] = merged["NetImports"].shift(1)
@@ -168,6 +161,80 @@ def build_disappearance(lag: bool, start_month: int = CROP_YEAR):
     merged["PeriodMonthNum"] = merged["MonthNum"].apply(lambda m: period_month_num(m, start_month))
     merged["PeriodMonth"] = merged["PeriodMonthNum"].map(dict(enumerate(period_month_order(start_month), start=1)))
     return merged.sort_values("Date").reset_index(drop=True)
+
+
+@st.cache_data(ttl=600)
+def build_disappearance(lag: bool, start_month: int = CROP_YEAR):
+    """Merge Net Imports (TDM) with Stocks change (manual ECF certs) and
+    compute monthly Disappearance = Net Imports - Stock Change, labeled on
+    whichever period basis (Calendar = start_month 1, Crop year = 10)."""
+    stocks = load_stocks()
+    net = load_net_imports()
+    if net.empty:
+        return pd.DataFrame(columns=["Date", "Year", "MonthNum", "NetImports", "StockChange", "Disappearance"])
+
+    merged = stocks.merge(net[["Date", "NetImports"]], on="Date", how="inner")
+    return _finalize_disappearance(merged, lag, start_month)
+
+
+@st.cache_data(ttl=600)
+def load_robusta_share_monthly():
+    """Monthly Robusta share of TDM's classified import volume — Brazil's
+    ratio is dynamic (from Cecafe), India/Uganda are locked, ~19 origins are
+    near-pure Robusta or Arabica. The ~8% of import volume with no rule yet
+    (Indonesia, re-export hubs, etc.) is implicitly assumed to share the same
+    type mix as the classified ~92%, since it isn't itself typed."""
+    if not ORIGIN_TYPE_SPLIT_PARQUET.exists():
+        return pd.DataFrame(columns=["Date", "RobustaShare"])
+    df = pd.read_parquet(ORIGIN_TYPE_SPLIT_PARQUET)
+    g = df.groupby(["YEAR", "MONTH"], as_index=False).agg(
+        Robusta=("ROBUSTA_QTY", "sum"), Arabica=("ARABICA_QTY", "sum"))
+    classified = g["Robusta"] + g["Arabica"]
+    g["RobustaShare"] = (g["Robusta"] / classified).where(classified > 0)
+    g["Date"] = pd.to_datetime(dict(year=g["YEAR"], month=g["MONTH"], day=1))
+    g = g.sort_values("Date")
+    g["RobustaShare"] = g["RobustaShare"].ffill().bfill()
+    return g[["Date", "RobustaShare"]]
+
+
+def load_stocks_by_group(group: str):
+    """ECF stocks for 'Robusta' or 'Arabica' (Natural + Washed Arabica
+    combined) — same shape as load_stocks() so it drops into the same
+    disappearance pipeline."""
+    if group == "Robusta":
+        return load_stocks("Robusta")
+    raw = load_stocks_raw()
+    sub = raw[raw["Type of Coffee"].isin(["Natural Arabica", "Washed Arabica"])]
+    g = sub.groupby(["Date", "Year", "MonthNum"], as_index=False)[["MT", "Bags"]].sum()
+    g = g.sort_values("Date")
+    g["StockChange"] = g["MT"].diff()
+    g["BagsChange"] = g["Bags"].diff()
+    return g.reset_index(drop=True)
+
+
+@st.cache_data(ttl=600)
+def build_disappearance_by_type(group: str, lag: bool, start_month: int = CROP_YEAR):
+    """Same as build_disappearance() but for one coffee type (Robusta or
+    Arabica). TDM Imports are origin-attributable (PARTNER = origin country,
+    see Automator/build_type_split.py), so they're split using the monthly
+    Robusta share directly. Exports (Europe re-exporting to the rest of the
+    world) are NOT origin-attributable — PARTNER there is the destination —
+    so as an approximation the same month's import-side Robusta share is
+    applied to Exports too, on the assumption Europe re-exports roughly the
+    type mix it's currently holding."""
+    net = load_net_imports()
+    share = load_robusta_share_monthly()
+    if net.empty or share.empty:
+        return pd.DataFrame(columns=["Date", "Year", "MonthNum", "NetImports", "StockChange", "Disappearance"])
+
+    merged_net = net.merge(share, on="Date", how="left")
+    merged_net["RobustaShare"] = merged_net["RobustaShare"].ffill().bfill()
+    frac = merged_net["RobustaShare"] if group == "Robusta" else (1 - merged_net["RobustaShare"])
+    merged_net["NetImports"] = merged_net["Imports"] * frac - merged_net["Exports"] * frac
+
+    stocks = load_stocks_by_group(group)
+    merged = stocks.merge(merged_net[["Date", "NetImports"]], on="Date", how="inner")
+    return _finalize_disappearance(merged, lag, start_month)
 
 
 def _drop_leading_incomplete(pivot, month_cols):
