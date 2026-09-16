@@ -11,7 +11,7 @@ from data_loader import (
 )
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
-    single_line_chart, bar_chart, bars_with_secondary_line_chart,
+    single_line_chart, bars_with_secondary_line_chart,
     two_line_chart, multi_series_chart, diverging_bar_chart,
     BLUE, ORANGE, AQUA, INK,
 )
@@ -146,11 +146,11 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
         with st.expander("Assumptions & methodology", expanded=False):
             st.markdown(footnote)
 
-    show_chart(seasonal_chart(wide_sel, ref_years=ref_years, current=current), "Seasonal pattern")
+    show_chart(seasonal_chart(wide_sel, current=current), "Seasonal pattern")
 
     c1, c2 = st.columns(2)
     with c1:
-        show_chart(bar_chart(ytd.index, ytd.values), "YTD trend")
+        show_chart(single_line_chart(ytd.index, ytd.values), "YTD trend")
     with c2:
         show_chart(latest_vs_band_chart(wide, current, ref_years),
                    f"{current} vs Min/Max/Avg", f"L{len(ref_years)}Y")
@@ -236,9 +236,9 @@ with tab_type:
             ),
             unsafe_allow_html=True,
         )
-        show_chart(seasonal_chart(ctx["wide"][ctx["sel_periods"]], ref_years=ctx["ref_years"],
-                                   current=ctx["current"]), f"{t} seasonal pattern")
-        show_chart(bar_chart(ytd_t.index, ytd_t.values), f"{t} YTD trend")
+        show_chart(seasonal_chart(ctx["wide"][ctx["sel_periods"]], current=ctx["current"]),
+                   f"{t} seasonal pattern")
+        show_chart(single_line_chart(ytd_t.index, ytd_t.values), f"{t} YTD trend")
 
     # ── Shared comparison: Robusta vs Arabica side by side ──────────────────
     if type_ctx["Robusta"] and type_ctx["Arabica"]:

@@ -88,37 +88,22 @@ def recent_columns(columns, n=6):
     return cols[-n:] if len(cols) > n else cols
 
 
-def seasonal_chart(wide, ref_years=None, current=None, previous=None, height=COMPACT_HEIGHT):
-    """One line per selected crop year (x = crop month), plus a Min/Max/Avg
-    band from `ref_years` (last N *complete* crop years) behind them —
-    mirrors TDM/files/app.py's Seasonal chart: latest year bold dark,
-    previous year red, older years a cycling pastel palette."""
+def seasonal_chart(wide, current=None, previous=None, height=COMPACT_HEIGHT):
+    """One line per selected crop year (x = crop month) — latest year bold
+    dark, previous year red, older years a cycling pastel palette, every
+    year labeled in the legend. No Min/Max/Avg band here — that comparison
+    already has its own chart (latest_vs_band_chart); dropping it is also
+    what makes room for every year's legend entry to fit on one line."""
     cols = list(wide.columns)
-    current = current or cols[-1]
-    previous = previous or (cols[-2] if len(cols) > 1 else None)
+    current = current if current is not None else (cols[-1] if cols else None)
+    previous = previous if previous is not None else (cols[-2] if len(cols) > 1 else None)
     fig = go.Figure()
-
-    if ref_years:
-        ref = wide[[c for c in ref_years if c in wide.columns]]
-        lo, hi, avg = ref.min(axis=1, skipna=True), ref.max(axis=1, skipna=True), ref.mean(axis=1, skipna=True)
-        fig.add_trace(go.Scatter(x=wide.index, y=hi, mode="lines", name=f"Max (L{len(ref_years)}Y)",
-                                  line=dict(color=BAND_MAX, width=1.2)))
-        fig.add_trace(go.Scatter(x=wide.index, y=lo, mode="lines", name=f"Min (L{len(ref_years)}Y)",
-                                  line=dict(color=BAND_MIN, width=1.2), fill="tonexty",
-                                  fillcolor="rgba(180,180,180,0.10)"))
-        fig.add_trace(go.Scatter(x=wide.index, y=avg, mode="lines", name=f"Avg (L{len(ref_years)}Y)",
-                                  line=dict(color=BAND_AVG, width=1.2, dash="dot")))
 
     pal_state = {"i": 0}
     for cy in cols:
         color, width = _year_style(cy, current, previous, pal_state)
-        # Only the current/previous years get a legend entry — labeling
-        # every pastel filler year is what turns a 6+ year overlay into an
-        # unreadable, wrapping legend. Color still identifies them; the
-        # story is "how does the latest year compare," not "name every year."
         fig.add_trace(go.Scatter(x=wide.index, y=wide[cy], mode="lines+markers", name=str(cy),
-                                  line=dict(color=color, width=width), marker=dict(size=4),
-                                  showlegend=cy in (current, previous)))
+                                  line=dict(color=color, width=width), marker=dict(size=4)))
 
     layout = _base_layout(height)
     layout["showlegend"] = True
@@ -182,15 +167,6 @@ def cumulative_chart(cum_wide, current=None, previous=None, show_avg=True, heigh
 def single_line_chart(x, y, color=BLUE, height=COMPACT_HEIGHT, y_suffix=""):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(color=color, width=2)))
-    fig.update_layout(**_base_layout(height, y_suffix))
-    return fig
-
-
-def bar_chart(x, y, color=BLUE, height=COMPACT_HEIGHT, y_suffix=""):
-    """Single-series bar chart — used for YTD trend, where a plain column
-    reads faster than a line for one series per period."""
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=x, y=y, marker_color=color, marker_line_width=0))
     fig.update_layout(**_base_layout(height, y_suffix))
     return fig
 
