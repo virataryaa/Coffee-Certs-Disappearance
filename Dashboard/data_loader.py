@@ -201,10 +201,10 @@ def build_disappearance(lag: int, start_month: int = CROP_YEAR):
 @st.cache_data(ttl=600)
 def load_robusta_share_monthly():
     """Monthly Robusta share of TDM's classified import volume — Brazil's
-    ratio is dynamic (from Cecafe), India/Uganda are locked, ~19 origins are
-    near-pure Robusta or Arabica. The ~8% of import volume with no rule yet
-    (Indonesia, re-export hubs, etc.) is implicitly assumed to share the same
-    type mix as the classified ~92%, since it isn't itself typed."""
+    ratio is dynamic (from Cecafe), India/Uganda are locked, ~20 origins
+    (including Indonesia) are near-pure Robusta or Arabica. The remainder
+    (re-export hubs like Switzerland/Germany, etc.) has no rule yet and is
+    implicitly assumed to share the classified mix, since it isn't itself typed."""
     if not ORIGIN_TYPE_SPLIT_PARQUET.exists():
         return pd.DataFrame(columns=["Date", "RobustaShare"])
     df = pd.read_parquet(ORIGIN_TYPE_SPLIT_PARQUET)

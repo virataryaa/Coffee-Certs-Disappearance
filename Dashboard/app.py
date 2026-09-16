@@ -165,9 +165,9 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
 TYPE_FOOTNOTE = (
     "**Imports** are allocated by origin country (see `Automator/build_type_split.py`): "
     "Brazil uses a dynamic monthly ratio from Cecafe Monthly's Brazil→Europe Type split; "
-    "India is locked at 60% Robusta / 40% Arabica; Uganda at 80% / 20%; ~19 other origins "
-    "are treated as near-pure by geography (e.g. Vietnam = Robusta, Colombia = Arabica). "
-    "~92% of import volume is classified this way — the remainder is assumed to share that "
+    "India is locked at 60% Robusta / 40% Arabica; Uganda at 80% / 20%; ~20 other origins "
+    "are treated as near-pure by geography (e.g. Vietnam and Indonesia = Robusta, Colombia = Arabica). "
+    "~95% of import volume is classified this way — the remainder is assumed to share that "
     "month's classified mix.\n\n"
     "**Exports** aren't origin-attributable (the TDM partner field is the destination, not "
     "the origin), so the same month's import-side type mix is applied to Exports too, as an "

@@ -63,6 +63,7 @@ CECAFE_EUROPE_DESTINATIONS = ["Belgium", "Germany", "Italy", "Netherlands", "Spa
 FIXED_SPLIT = {
     # Robusta
     "Vietnam": (1.00, 0.00),
+    "Indonesia": (1.00, 0.00),
     "Cote d'Ivoire": (1.00, 0.00),
     "Cameroon": (1.00, 0.00),
     "Congo (DROC)": (1.00, 0.00),
