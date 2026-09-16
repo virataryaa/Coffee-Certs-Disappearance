@@ -13,7 +13,7 @@ from data_loader import (
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
     single_line_chart, bars_with_secondary_line_chart, line_with_secondary_line_chart,
-    two_line_chart, multi_series_chart, diverging_bar_chart, scatter_with_r2,
+    two_line_chart, multi_series_chart, diverging_bar_chart, scatter_with_r2, r2_heatmap_chart,
     BLUE, ORANGE, AQUA, INK,
 )
 from table_html import (
@@ -339,6 +339,32 @@ with tab_type:
             )
             show_chart(
                 scatter_fig, "Robusta share vs KC-RC spread (scatter)", f"R² = {r2:.2f}",
+            )
+
+            lag_grid = list(range(0, 25))
+            smooth_grid = list(range(1, 13))
+            base_spread = load_kc_rc_ratio()[["Date", "KC_RC_Spread"]].copy()
+            base_spread["SpreadRaw"] = (
+                base_spread["KC_RC_Spread"] / KC_FACTOR if arb_unit == "¢/lb" else base_spread["KC_RC_Spread"]
+            )
+            raw_share = rob_d.merge(ara_d, on="Date", how="inner")
+            raw_total = raw_share["Robusta"] + raw_share["Arabica"]
+            raw_share["SharePctRaw"] = (raw_share["Robusta"] / raw_total * 100).where(raw_total > 0)
+            r2_grid = []
+            for smooth in smooth_grid:
+                row = []
+                share_smoothed = raw_share[["Date", "SharePctRaw"]].copy()
+                share_smoothed["SharePctRaw"] = share_smoothed["SharePctRaw"].rolling(smooth, min_periods=1).mean()
+                for lag in lag_grid:
+                    sp = base_spread[["Date", "SpreadRaw"]].copy()
+                    sp["Date"] = sp["Date"] + pd.DateOffset(months=lag)
+                    sp["Smoothed"] = sp["SpreadRaw"].rolling(smooth, min_periods=1).mean()
+                    m = share_smoothed.merge(sp[["Date", "Smoothed"]], on="Date", how="inner").dropna()
+                    row.append(float(m["Smoothed"].corr(m["SharePctRaw"]) ** 2) if len(m) >= 2 and m["Smoothed"].std() > 0 else 0.0)
+                r2_grid.append(row)
+            show_chart(
+                r2_heatmap_chart(r2_grid, lag_grid, smooth_grid, "Arb lag (months)", "Rolling avg (months)"),
+                "R² grid: Robusta share vs KC-RC spread", "lag 0-24m x rolling avg 1-12m",
             )
         else:
             st.info("Not enough overlapping history between disappearance and price data yet.")

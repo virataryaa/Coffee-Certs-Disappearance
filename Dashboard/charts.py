@@ -209,6 +209,24 @@ def scatter_with_r2(x, y, x_name, y_name, height=COMPACT_HEIGHT):
     return fig, r2
 
 
+def r2_heatmap_chart(z, x_labels, y_labels, x_title="", y_title="", height=COMPACT_HEIGHT + 60):
+    """Blues heatmap of R² values over a (rolling avg x arb lag) grid."""
+    fig = go.Figure(go.Heatmap(
+        z=z, x=x_labels, y=y_labels, colorscale="Blues", zmin=0, zmax=1,
+        colorbar=dict(title="R²", thickness=12, outlinewidth=0),
+        text=[[f"{v:.2f}" for v in row] for row in z],
+        texttemplate="%{text}", textfont=dict(size=9),
+        hovertemplate=f"{x_title}: %{{x}}<br>{y_title}: %{{y}}<br>R²: %{{z:.2f}}<extra></extra>",
+    ))
+    layout = _base_layout(height)
+    layout["xaxis"]["title"] = dict(text=x_title, font=dict(color=MUTED, size=10))
+    layout["yaxis"]["title"] = dict(text=y_title, font=dict(color=MUTED, size=10))
+    layout["xaxis"]["type"] = "category"
+    layout["yaxis"]["type"] = "category"
+    fig.update_layout(**layout)
+    return fig
+
+
 def multi_series_chart(df_x_date, series: dict, height=COMPACT_HEIGHT):
     """<=4 categorical series sharing one axis, direct-labeled at the line end
     (mandatory once you're at 4 series). `series` = {name: (y_values, color)}."""
