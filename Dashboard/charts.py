@@ -232,6 +232,24 @@ def bars_with_secondary_line_chart(x_bars, bar_series: dict, x_line, y_line, lin
     return fig
 
 
+def line_with_secondary_line_chart(x1, y1, name1, x2, y2, name2, height=COMPACT_HEIGHT,
+                                    color1=BLUE, color2=INK):
+    """One line on the primary axis (e.g. Robusta's % share of disappearance),
+    one line on a secondary axis (e.g. the KC/RC spread) — same deliberate
+    dual-axis exception as bars_with_secondary_line_chart, for the same
+    reason: a % share and a $/MT or ¢/lb spread have no honest common axis."""
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x1, y=y1, name=name1, mode="lines", line=dict(color=color1, width=2.2)))
+    fig.add_trace(go.Scatter(x=x2, y=y2, name=name2, mode="lines", line=dict(color=color2, width=2.2), yaxis="y2"))
+    layout = _base_layout(height)
+    layout["showlegend"] = True
+    layout["legend"] = _legend()
+    layout["yaxis2"] = dict(overlaying="y", side="right", gridcolor=GRID, showgrid=False,
+                             tickfont=dict(color=MUTED, size=10), zeroline=False)
+    fig.update_layout(**layout)
+    return fig
+
+
 def rolling_multi_chart(df_by_type: dict, height=COMPACT_HEIGHT + 40):
     """Rolling N-month Disappearance for 2+ coffee types on one axis —
     e.g. {'Robusta': (dates, values), 'Arabica': (dates, values)}. Same unit,

@@ -8,6 +8,7 @@ STOCKS_PATH = DATABASE_DIR / "Coffee Stocks.xlsx"
 TDM_EU_PARQUET = DATABASE_DIR / "tdm_coffee_eu.parquet"
 ORIGIN_TYPE_SPLIT_PARQUET = DATABASE_DIR / "origin_type_split.parquet"
 KC_RC_RATIO_PARQUET = DATABASE_DIR / "kc_rc_ratio.parquet"
+KC_FACTOR = 22.0462  # cents/lb -> $/MT (same conversion build_price_ratio.py uses)
 
 STOCKS_SHEET = "ECF"
 TOTAL_ROW = "Total Europe"
