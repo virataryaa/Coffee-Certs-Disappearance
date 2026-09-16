@@ -119,6 +119,7 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
         return
     df = df.copy()
     df["Disappearance"] = to_unit(df["Disappearance"], unit_label)
+    df["NetImports"] = to_unit(df["NetImports"], unit_label)
 
     ctx = _period_context(df, start_month)
     if ctx is None:
@@ -161,6 +162,12 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
         show_chart(single_line_chart(roll["Date"], roll["Rolling12mKMT"]), "Rolling 12-month", f"k {y_unit}")
     with c4:
         show_chart(cumulative_chart(cum_sel, current=current), "Cumulative")
+
+    c5, c6 = st.columns(2)
+    with c5:
+        show_chart(single_line_chart(df["Date"], df["NetImports"]), "Net Imports (GBE)", y_unit)
+    with c6:
+        show_chart(single_line_chart(df["Date"], df["Disappearance"]), "Disappearance", y_unit)
 
 
 TYPE_FOOTNOTE = (
