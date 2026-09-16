@@ -272,44 +272,57 @@ with tab_type:
     # ── Cross-check: monthly disappearance (bars) vs KC-RC spread (line) ────
     if KC_RC_RATIO_PARQUET.exists():
         st.markdown('<p class="coffee-section">Disappearance vs KC-RC arb</p>', unsafe_allow_html=True)
-        arb_col1, arb_col2 = st.columns([2, 3])
+        arb_col1, arb_col2, arb_col3 = st.columns([2, 2, 2])
         with arb_col1:
             arb_unit = st.radio("Spread unit", ["$/MT", "¢/lb"], horizontal=True,
                                  label_visibility="collapsed", key="arb_unit")
         with arb_col2:
             arb_shift = st.number_input(
-                "Shift Arb (months) — positive = today's arb tested against future disappearance",
-                min_value=-12, max_value=12, value=0, step=1, key="arb_shift",
+                "Arb lag (months)", min_value=-12, max_value=12, value=0, step=1, key="arb_shift",
             )
+        with arb_col3:
+            arb_smooth = st.number_input(
+                "Rolling avg (months)", min_value=1, max_value=12, value=1, step=1, key="arb_smooth",
+            )
+        st.caption(
+            "Positive lag = Arb is lagging by N months (shows an older arb value against current "
+            "disappearance); negative = Arb leads. Rolling avg smooths the arb and Robusta-share lines."
+        )
 
         rob_d = type_dfs["Robusta"][["Date", "Disappearance"]].rename(columns={"Disappearance": "Robusta"})
         ara_d = type_dfs["Arabica"][["Date", "Disappearance"]].rename(columns={"Disappearance": "Arabica"})
         spread_df = load_kc_rc_ratio().copy()
         # Shift the arb's own calendar date forward/back before merging — a
-        # +N shift re-labels Jan's arb as April's (N=3), so it lines up
-        # against April's disappearance: "does today's arb show up N months
-        # later?" A negative shift tests the reverse (arb lagging disappearance).
+        # positive lag re-labels Jan's arb as April's (N=3), so the arb value
+        # shown next to April's disappearance is actually 3 months old.
         spread_df["Date"] = spread_df["Date"] + pd.DateOffset(months=int(arb_shift))
         spread_df["SpreadDisplay"] = (
             spread_df["KC_RC_Spread"] / KC_FACTOR if arb_unit == "¢/lb" else spread_df["KC_RC_Spread"]
         )
-        shift_note = f", shifted {arb_shift:+d}m" if arb_shift else ""
-        line_label = f"KC-RC spread ({arb_unit}{shift_note})"
+        spread_df["SpreadDisplay"] = spread_df["SpreadDisplay"].rolling(arb_smooth, min_periods=1).mean()
+        shift_note = f", lag {arb_shift:+d}m" if arb_shift else ""
+        smooth_note = f", {arb_smooth}m avg" if arb_smooth > 1 else ""
+        line_label = f"KC-RC spread ({arb_unit}{shift_note}{smooth_note})"
 
         merged = rob_d.merge(ara_d, on="Date", how="inner").merge(
             spread_df[["Date", "SpreadDisplay"]], on="Date", how="inner")
         if not merged.empty:
+            bar_series = {
+                "Robusta": merged["Robusta"].rolling(arb_smooth, min_periods=1).mean(),
+                "Arabica": merged["Arabica"].rolling(arb_smooth, min_periods=1).mean(),
+            }
             show_chart(
                 bars_with_secondary_line_chart(
-                    merged["Date"], {"Robusta": merged["Robusta"], "Arabica": merged["Arabica"]},
+                    merged["Date"], bar_series,
                     merged["Date"], merged["SpreadDisplay"], line_label, line_color=INK,
                 ),
-                "Monthly disappearance vs KC-RC spread", f"bars: {y_unit} · line: {arb_unit}, right axis",
+                "Monthly disappearance vs KC-RC spread", f"bars: {y_unit} · line: {arb_unit}, right axis{smooth_note}",
             )
 
             share_df = rob_d.merge(ara_d, on="Date", how="inner")
             total = share_df["Robusta"] + share_df["Arabica"]
             share_df["RobustaSharePct"] = (share_df["Robusta"] / total * 100).where(total > 0)
+            share_df["RobustaSharePct"] = share_df["RobustaSharePct"].rolling(arb_smooth, min_periods=1).mean()
             share_merged = share_df.merge(spread_df[["Date", "SpreadDisplay"]], on="Date", how="inner")
             show_chart(
                 line_with_secondary_line_chart(
@@ -317,7 +330,7 @@ with tab_type:
                     share_merged["Date"], share_merged["SpreadDisplay"], line_label,
                     color1=BLUE, color2=INK,
                 ),
-                "Robusta share of disappearance vs KC-RC spread", f"%, left · {arb_unit}{shift_note}, right",
+                "Robusta share of disappearance vs KC-RC spread", f"%, left{smooth_note} · {arb_unit}{shift_note}, right",
             )
         else:
             st.info("Not enough overlapping history between disappearance and price data yet.")
