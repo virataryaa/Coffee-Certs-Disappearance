@@ -46,23 +46,24 @@ def _flatten(html):
 
 _CHART_HEADER_STYLE = f"""
 <style>
-.coffee-chart-title {{ font-size: 13px; font-weight: 600; color: {INK}; margin: 10px 0 0; }}
-.coffee-chart-subtitle {{ font-size: 10.5px; color: {MUTED}; margin: 0 0 2px; }}
+.coffee-chart-title {{ font-size: 13px; font-weight: 600; color: {INK}; margin: 10px 0 2px; }}
+.coffee-chart-title span {{ font-weight: 400; color: {MUTED}; }}
 </style>
 """
 
 
-def chart_header_html(title, subtitle=""):
-    """Real DOM text for a chart's title/subtitle, rendered via st.markdown
-    directly above st.plotly_chart — a Plotly-internal title's position is a
-    fraction of the whole figure (paper coordinates), so any font-metric
-    mismatch clips it against the canvas edge. Plain HTML never has that
-    problem."""
-    sub = f'<div class="coffee-chart-subtitle">{subtitle}</div>' if subtitle else ""
+def chart_header_html(title, detail=""):
+    """Real DOM text for a chart's title, rendered via st.markdown directly
+    above st.plotly_chart — a Plotly-internal title's position is a fraction
+    of the whole figure (paper coordinates), so any font-metric mismatch
+    clips it against the canvas edge. Plain HTML never has that problem.
+    One line only: `detail` (if given) rides inline in muted text — for a
+    chart-specific fact (a window length, a unit scale), never a restatement
+    of the sidebar's basis/unit/lag, which is already visible to the reader."""
+    text = f"{title} <span>({detail})</span>" if detail else title
     return _flatten(f"""
     {_CHART_HEADER_STYLE}
-    <div class="coffee-chart-title">{title}</div>
-    {sub}
+    <div class="coffee-chart-title">{text}</div>
     """)
 
 

@@ -195,24 +195,6 @@ def bar_chart(x, y, color=BLUE, height=COMPACT_HEIGHT, y_suffix=""):
     return fig
 
 
-def latest_vs_avg_bar_chart(wide, current, ref_years, height=COMPACT_HEIGHT):
-    """Bar-chart version of latest_vs_band_chart: current period vs the
-    L{n}Y average, grouped columns per month (min/max don't read as bars, so
-    this keeps the 'is it normal' comparison to current-vs-average)."""
-    ref = wide[[c for c in ref_years if c in wide.columns]]
-    avg = ref.mean(axis=1, skipna=True)
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=wide.index, y=avg, name=f"Avg (L{len(ref_years)}Y)", marker_color=BASELINE, marker_line_width=0))
-    if current in wide.columns:
-        fig.add_trace(go.Bar(x=wide.index, y=wide[current], name=str(current), marker_color=YEAR_CURRENT, marker_line_width=0))
-    layout = _base_layout(height)
-    layout["showlegend"] = True
-    layout["legend"] = _legend()
-    layout["barmode"] = "group"
-    fig.update_layout(**layout)
-    return fig
-
-
 def two_line_chart(x, y1, name1, y2, name2, height=COMPACT_HEIGHT):
     """Two series that share one meaningful axis — e.g. a level and its
     rolling average. Never use this to fake a dual-axis comparison."""

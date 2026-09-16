@@ -11,7 +11,7 @@ from data_loader import (
 )
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
-    single_line_chart, bar_chart, latest_vs_avg_bar_chart, indexed_dual_chart,
+    single_line_chart, bar_chart, indexed_dual_chart,
     two_line_chart, multi_series_chart, diverging_bar_chart,
     BLUE, ORANGE, AQUA,
 )
@@ -27,6 +27,7 @@ CSS = """
 .block-container { max-width: 1400px; padding-top: 4rem; }
 h1.coffee-title { font-size: 18px; font-weight: 700; color: #0b0b0b; margin: 0; }
 p.coffee-caption { font-size: 11px; color: #898781; margin: 1px 0 8px; }
+p.coffee-section { font-size: 12px; font-weight: 600; color: #52514e; margin: 14px 0 2px; }
 [data-testid="stVerticalBlock"] { gap: 0.5rem; }
 
 /* Segmented-button styling for st.radio, used as toggle controls */
@@ -52,11 +53,13 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] > div[role="radiogro
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-def show_chart(fig, title, subtitle=""):
-    """Chart + its title/subtitle as real DOM text right above it (see
-    table_html.chart_header_html) — never clips, unlike a Plotly-internal
-    title anchored in paper coordinates."""
-    st.markdown(chart_header_html(title, subtitle), unsafe_allow_html=True)
+def show_chart(fig, title, detail=""):
+    """Chart + a single-line title (see table_html.chart_header_html) right
+    above it — real DOM text, never clips like a Plotly-internal title can.
+    `detail` is for a fact specific to THIS chart (a window length, a unit
+    scale) — never a restatement of the sidebar's basis/unit/lag, which is
+    already visible to the reader on every chart otherwise."""
+    st.markdown(chart_header_html(title, detail), unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -85,11 +88,27 @@ with st.sidebar:
         period_range = None
 
 
+def _period_context(df, start_month):
+    """Common per-tab derived state: pivot table, period list, current
+    period, ref years, and the slider-selected window."""
+    month_order = period_month_order(start_month)
+    pivot = period_table(df, start_month=start_month)
+    all_periods = pivot["Period"].tolist()
+    if not all_periods:
+        return None
+    current = all_periods[-1]
+    n_months = int(df.loc[df["Period"] == current, "PeriodMonthNum"].max())
+    ref_years = complete_periods(pivot, start_month=start_month)[-10:]
+    rng = period_range if period_range else (all_periods[0], all_periods[-1])
+    sel_periods = [p for p in all_periods if rng[0] <= p <= rng[1]]
+    wide = pivot.set_index("Period")[month_order].T
+    return dict(month_order=month_order, pivot=pivot, all_periods=all_periods, current=current,
+                n_months=n_months, ref_years=ref_years, sel_periods=sel_periods, wide=wide)
+
+
 def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
-    """Shared body for the Disappearance tab: the heatmap table + charts,
-    all in the globally chosen period basis / unit / lag / period range.
-    `build_fn(lag, start_month)` returns the merged Net-Imports/Stock-Change
-    dataframe (still in MT)."""
+    """Table + charts for one Net-Imports/Stock-Change series, in the
+    globally chosen period basis / unit / lag / period range."""
     st.markdown(f'<h1 class="coffee-title">{title}</h1>', unsafe_allow_html=True)
     st.markdown(f'<p class="coffee-caption">{caption}</p>', unsafe_allow_html=True)
 
@@ -100,29 +119,26 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
     df = df.copy()
     df["Disappearance"] = to_unit(df["Disappearance"], unit_label)
 
-    month_order = period_month_order(start_month)
-    pivot = period_table(df, start_month=start_month)
-    all_periods = pivot["Period"].tolist()
-    if not all_periods:
+    ctx = _period_context(df, start_month)
+    if ctx is None:
         st.warning("Not enough history to build a full period yet.")
         return
-    current_period = all_periods[-1]
-    n_months = int(df.loc[df["Period"] == current_period, "PeriodMonthNum"].max())
+    month_order, pivot, all_periods = ctx["month_order"], ctx["pivot"], ctx["all_periods"]
+    current, n_months, ref_years = ctx["current"], ctx["n_months"], ctx["ref_years"]
+    sel_periods, wide = ctx["sel_periods"], ctx["wide"]
 
     ytd = ytd_by_period(df, n_months, start_month=start_month, valid_periods=all_periods)
-    ref_periods = complete_periods(pivot, start_month=start_month)[-10:]
     roll = rolling_12m(df)
-
-    rng = period_range if period_range else (all_periods[0], all_periods[-1])
-    sel_periods = [p for p in all_periods if rng[0] <= p <= rng[1]]
-    ctx = f"{basis_label} · {y_unit} · {lag_label.lower()}"
+    wide_sel = wide[sel_periods]
+    cum = cumulative_by_period(df, start_month=start_month, valid_periods=all_periods)
+    cum_sel = cum[[p for p in sel_periods if p in cum.columns]]
 
     st.markdown(
         heatmap_table_html(
             pivot, month_order,
-            title=f"Monthly disappearance ({ctx})",
+            title="Monthly disappearance",
             subtitle="Disappearance = Net Imports (TDM) − Stock Change (ECF certified stocks).",
-            ref_years=ref_periods, current_period=current_period, ytd_months=n_months,
+            ref_years=ref_years, current_period=current, ytd_months=n_months,
         ),
         unsafe_allow_html=True,
     )
@@ -130,59 +146,20 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
         with st.expander("Assumptions & methodology", expanded=False):
             st.markdown(footnote)
 
-    wide = pivot.set_index("Period")[month_order].T
-    wide_sel = wide[sel_periods]
-    cum = cumulative_by_period(df, start_month=start_month, valid_periods=all_periods)
-    cum_sel = cum[[p for p in sel_periods if p in cum.columns]]
-
-    show_chart(
-        seasonal_chart(wide_sel, ref_years=ref_periods, current=current_period),
-        "Seasonal pattern", ctx,
-    )
+    show_chart(seasonal_chart(wide_sel, ref_years=ref_years, current=current), "Seasonal pattern")
 
     c1, c2 = st.columns(2)
     with c1:
-        show_chart(bar_chart(ytd.index, ytd.values), "YTD trend", ctx)
+        show_chart(bar_chart(ytd.index, ytd.values), "YTD trend")
     with c2:
-        show_chart(
-            latest_vs_band_chart(wide, current_period, ref_periods),
-            f"{current_period} vs Min/Max/Avg", f"L{len(ref_periods)}Y · {ctx}",
-        )
+        show_chart(latest_vs_band_chart(wide, current, ref_years),
+                   f"{current} vs Min/Max/Avg", f"L{len(ref_years)}Y")
 
     c3, c4 = st.columns(2)
     with c3:
-        show_chart(single_line_chart(roll["Date"], roll["Rolling12mKMT"]),
-                    "Rolling 12-month", f"k {y_unit} · {basis_label}")
+        show_chart(single_line_chart(roll["Date"], roll["Rolling12mKMT"]), "Rolling 12-month", f"k {y_unit}")
     with c4:
-        show_chart(cumulative_chart(cum_sel, current=current_period), "Cumulative", ctx)
-
-
-def render_type_bar_views(df_t, pivot_t, current_t, ref_t, all_periods_t, ctx, key_prefix):
-    """Collapsed-by-default alternate views for one coffee type: Seasonal
-    and Cumulative as line charts (with an average reference line), and
-    Min-Max-Avg-vs-latest / YTD as bars."""
-    month_order = period_month_order(start_month)
-    with st.expander(f"{key_prefix} — Seasonal / Min-Max-Avg / YTD / Cumulative", expanded=False):
-        wide_t = pivot_t.set_index("Period")[month_order].T
-        rng = period_range if period_range else (all_periods_t[0], all_periods_t[-1])
-        sel_t = [p for p in all_periods_t if rng[0] <= p <= rng[1]]
-        wide_t_sel = wide_t[sel_t]
-        cum_t = cumulative_by_period(df_t, start_month=start_month, valid_periods=all_periods_t)
-        cum_t_sel = cum_t[[p for p in sel_t if p in cum_t.columns]]
-        n_months_t = int(df_t.loc[df_t["Period"] == current_t, "PeriodMonthNum"].max())
-        ytd_t = ytd_by_period(df_t, n_months_t, start_month=start_month, valid_periods=all_periods_t)
-
-        b1, b2 = st.columns(2)
-        with b1:
-            show_chart(seasonal_chart(wide_t_sel, ref_years=ref_t, current=current_t), "Seasonal pattern", ctx)
-        with b2:
-            show_chart(latest_vs_avg_bar_chart(wide_t, current_t, ref_t),
-                       f"{current_t} vs Avg (bars)", f"L{len(ref_t)}Y · {ctx}")
-        b3, b4 = st.columns(2)
-        with b3:
-            show_chart(bar_chart(ytd_t.index, ytd_t.values), "YTD trend (bars)", ctx)
-        with b4:
-            show_chart(cumulative_chart(cum_t_sel, current=current_t), "Cumulative", ctx)
+        show_chart(cumulative_chart(cum_sel, current=current), "Cumulative")
 
 
 TYPE_FOOTNOTE = (
@@ -227,14 +204,13 @@ with tab_type:
     st.markdown('<p class="coffee-caption">Net Imports split by origin, minus ECF stock change by type</p>',
                 unsafe_allow_html=True)
 
-    ctx = f"{basis_label} · {y_unit} · {lag_label.lower()}"
-
-    type_dfs = {}
+    type_dfs, type_ctx = {}, {}
     for t in ("Robusta", "Arabica"):
         d = build_disappearance_by_type(t, lag=lag, start_month=start_month)
         d = d.copy()
         d["Disappearance"] = to_unit(d["Disappearance"], unit_label)
         type_dfs[t] = d
+        type_ctx[t] = _period_context(d, start_month)
 
     win_col, _ = st.columns([2, 4])
     with win_col:
@@ -243,15 +219,47 @@ with tab_type:
     window = int(window_label.rstrip("m"))
     rolling_series = {t: (r["Date"], r["Rolling"]) for t, d in type_dfs.items()
                        for r in [rolling_window(d, window)]}
+    show_chart(rolling_multi_chart(rolling_series), f"Rolling {window_label}", "Robusta vs Arabica")
 
-    show_chart(
-        rolling_multi_chart(rolling_series),
-        f"Rolling {window_label} disappearance", f"Robusta vs Arabica · {y_unit}",
-    )
+    # ── Per-type: table + seasonal + YTD ────────────────────────────────────
+    for t in ("Robusta", "Arabica"):
+        ctx = type_ctx[t]
+        if ctx is None:
+            st.warning(f"Not enough {t} history yet.")
+            continue
+        df_t = type_dfs[t]
+        ytd_t = ytd_by_period(df_t, ctx["n_months"], start_month=start_month, valid_periods=ctx["all_periods"])
+        st.markdown(
+            heatmap_table_html(
+                ctx["pivot"], ctx["month_order"], title=f"{t} monthly disappearance",
+                ref_years=ctx["ref_years"], current_period=ctx["current"], ytd_months=ctx["n_months"],
+            ),
+            unsafe_allow_html=True,
+        )
+        show_chart(seasonal_chart(ctx["wide"][ctx["sel_periods"]], ref_years=ctx["ref_years"],
+                                   current=ctx["current"]), f"{t} seasonal pattern")
+        show_chart(bar_chart(ytd_t.index, ytd_t.values), f"{t} YTD trend")
 
+    # ── Shared comparison: Robusta vs Arabica side by side ──────────────────
+    if type_ctx["Robusta"] and type_ctx["Arabica"]:
+        st.markdown('<p class="coffee-section">Robusta vs Arabica — comparison</p>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        for col, t in zip((c1, c2), ("Robusta", "Arabica")):
+            ctx = type_ctx[t]
+            with col:
+                show_chart(latest_vs_band_chart(ctx["wide"], ctx["current"], ctx["ref_years"]),
+                           f"{t} vs Min/Max/Avg", f"L{len(ctx['ref_years'])}Y")
+        c3, c4 = st.columns(2)
+        for col, t in zip((c3, c4), ("Robusta", "Arabica")):
+            ctx = type_ctx[t]
+            cum_t = cumulative_by_period(type_dfs[t], start_month=start_month, valid_periods=ctx["all_periods"])
+            cum_t_sel = cum_t[[p for p in ctx["sel_periods"] if p in cum_t.columns]]
+            with col:
+                show_chart(cumulative_chart(cum_t_sel, current=ctx["current"]), f"{t} cumulative")
+
+    # ── Cross-check: physical mix vs market price ratio ─────────────────────
     if KC_RC_RATIO_PARQUET.exists():
-        st.markdown('<p class="coffee-caption" style="font-weight:600;color:#52514e;">'
-                    'Physical vs market: Robusta share of disappearance vs KC/RC price ratio</p>',
+        st.markdown('<p class="coffee-section">Physical vs market: disappearance mix vs KC/RC price ratio</p>',
                     unsafe_allow_html=True)
         smooth_col, _ = st.columns([2, 4])
         with smooth_col:
@@ -263,11 +271,10 @@ with tab_type:
         if not share.empty and not ratio.empty:
             show_chart(
                 indexed_dual_chart(
-                    share["Date"], share["RobustaShareSmoothed"], f"Robusta share of disappearance ({smooth_label} avg)",
+                    share["Date"], share["RobustaShareSmoothed"], f"Robusta share of disappearance ({smooth_label})",
                     ratio["Date"], ratio["KC_RC_Ratio"], "KC/RC price ratio",
                 ),
-                "Robusta share of disappearance vs KC/RC price ratio",
-                f"Both indexed to 100 at first common month · {smooth_label} smoothing",
+                "Robusta share vs KC/RC ratio", "indexed to 100",
             )
             with st.expander("How to read this", expanded=False):
                 st.markdown(
@@ -287,34 +294,13 @@ with tab_type:
         else:
             st.info("Not enough overlapping history between disappearance and price data yet.")
 
-    for t in ("Robusta", "Arabica"):
-        df_t = type_dfs[t]
-        month_order = period_month_order(start_month)
-        pivot_t = period_table(df_t, start_month=start_month)
-        if pivot_t.empty:
-            st.warning(f"Not enough {t} history yet.")
-            continue
-        current_t = pivot_t["Period"].iloc[-1]
-        n_months_t = int(df_t.loc[df_t["Period"] == current_t, "PeriodMonthNum"].max())
-        ref_t = complete_periods(pivot_t, start_month=start_month)[-10:]
-        all_periods_t = pivot_t["Period"].tolist()
-        st.markdown(
-            heatmap_table_html(
-                pivot_t, month_order,
-                title=f"{t} monthly disappearance ({ctx})",
-                ref_years=ref_t, current_period=current_t, ytd_months=n_months_t,
-            ),
-            unsafe_allow_html=True,
-        )
-        render_type_bar_views(df_t, pivot_t, current_t, ref_t, all_periods_t, ctx, f"{t} monthly disappearance")
-
     with st.expander("Assumptions & methodology", expanded=False):
         st.markdown(TYPE_FOOTNOTE)
 
 # ── ECF Stocks ────────────────────────────────────────────────────────────────
 with tab_stocks:
     st.markdown('<h1 class="coffee-title">ECF Stocks</h1>', unsafe_allow_html=True)
-    st.markdown(f'<p class="coffee-caption">Monthly ECF certified stocks by coffee type, {y_unit} — data from Jan 2020</p>',
+    st.markdown(f'<p class="coffee-caption">Monthly ECF certified stocks by coffee type — data from Jan 2020</p>',
                 unsafe_allow_html=True)
 
     type_ = st.radio("Type of Coffee", stock_types(), horizontal=True, key="stock_type")
@@ -335,13 +321,12 @@ with tab_stocks:
     change_col = "BagsChange" if col == "Bags" else "StockChange"
     s1, s2 = st.columns(2)
     with s1:
-        show_chart(diverging_bar_chart(stocks["Date"], stocks[change_col]),
-                   f"{type_} — month-over-month change", y_unit)
+        show_chart(diverging_bar_chart(stocks["Date"], stocks[change_col]), f"{type_} — month-over-month change")
     with s2:
         total = stocks_total_series(unit=unit_label)
         show_chart(
             two_line_chart(total["Date"], total["Level"], "Total Europe", total["RollingAvg"], "12m average"),
-            "Total Europe stocks & 12m average", y_unit,
+            "Total Europe stocks & 12m average",
         )
 
     comp = stocks_composition_series(unit=unit_label)
@@ -354,7 +339,7 @@ with tab_stocks:
                 "Washed Arabica": (comp["Washed Arabica"], AQUA),
             },
         ),
-        "Stocks by coffee type", y_unit,
+        "Stocks by coffee type",
     )
 
     st.caption(
