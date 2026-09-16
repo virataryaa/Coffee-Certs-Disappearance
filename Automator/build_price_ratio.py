@@ -1,18 +1,23 @@
 """
-Hardmine — KC/RC Price Ratio (Arabica/Robusta futures)
-=========================================================
+Hardmine — KC/RC Price Spread & Ratio (Arabica/Robusta futures)
+==================================================================
 A small derived output for comparing the market-implied Arabica/Robusta
-price ratio against the physical Robusta-share-of-disappearance series
-(Dashboard/data_loader.py's load_robusta_share_monthly-equivalent, but for
-consumption rather than imports). Reads the ICEBREAKER ARB dashboard's own
-front-month price data (a sibling repo, local path — same pattern as
-build_type_split.py's read of Cecafe Monthly.xlsx) and writes a small,
-self-contained monthly parquet into this repo's own Database/, so the
-Streamlit Cloud deployment never needs to reach the other repo at runtime.
+price relationship against the physical Robusta/Arabica disappearance mix.
+Reads the ICEBREAKER ARB dashboard's own front-month price data (a sibling
+repo, local path — same pattern as build_type_split.py's read of Cecafe
+Monthly.xlsx) and writes a small, self-contained monthly parquet into this
+repo's own Database/, so the Streamlit Cloud deployment never needs to
+reach the other repo at runtime.
 
-KC (Arabica, ¢/lb) is converted to $/MT (x22.0462) before ratioing against
-RC (Robusta, already $/MT). Falls back to the 2nd-month price on days the
-1st month isn't quoted (common right before contract rollover).
+KC (Arabica, ¢/lb) is converted to $/MT (x22.0462) before combining with
+RC (Robusta, already $/MT) — same conversion the ARB dashboard itself uses.
+Falls back to the 2nd-month price on days the 1st month isn't quoted
+(common right before contract rollover).
+
+Saves both:
+  - KC_RC_Spread = KC($/MT) - RC($/MT)   ("Arabica Premium over Robusta",
+    same quantity as the ARB dashboard's Spread Monitor)
+  - KC_RC_Ratio  = KC($/MT) / RC($/MT)
 
 Usage:
     python build_price_ratio.py
@@ -57,12 +62,13 @@ def main():
     rc_px = rc["px1"].fillna(rc["px2"]).astype(float)
 
     kc_mt = kc_px * KC_FACTOR
-    ratio = (kc_mt / rc_px).dropna()
-    ratio.index = pd.to_datetime(ratio.index)
+    daily = pd.DataFrame({"KC_MT": kc_mt, "RC_MT": rc_px}).dropna()
+    daily.index = pd.to_datetime(daily.index)
+    daily["Spread"] = daily["KC_MT"] - daily["RC_MT"]
+    daily["Ratio"] = daily["KC_MT"] / daily["RC_MT"]
 
-    monthly = ratio.resample("MS").mean().rename("KC_RC_Ratio").reset_index()
-    monthly = monthly.rename(columns={"Date": "Date", "index": "Date"})
-    monthly.columns = ["Date", "KC_RC_Ratio"]
+    monthly = daily[["Spread", "Ratio"]].resample("MS").mean().reset_index()
+    monthly.columns = ["Date", "KC_RC_Spread", "KC_RC_Ratio"]
 
     monthly.to_parquet(OUT_FILE, engine="pyarrow", index=False)
     log.info("Saved -> %s", OUT_FILE)

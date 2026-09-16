@@ -343,30 +343,14 @@ def rolling_12m(df):
 
 @st.cache_data(ttl=600)
 def load_kc_rc_ratio():
-    """Monthly KC (Arabica futures, converted to $/MT) / RC (Robusta
-    futures, $/MT) price ratio — a derived, self-contained snapshot built
-    by Automator/build_price_ratio.py from the ICEBREAKER ARB dashboard's
-    own front-month data (a sibling repo; read only when that script runs
-    locally, never at Streamlit Cloud runtime)."""
+    """Monthly KC (Arabica futures, $/MT) vs RC (Robusta futures, $/MT):
+    KC_RC_Spread (Arabica premium, $/MT — same quantity as the ICEBREAKER
+    ARB dashboard's own Spread Monitor) and KC_RC_Ratio. A derived,
+    self-contained snapshot built by Automator/build_price_ratio.py from
+    that dashboard's front-month data (a sibling repo; read only when that
+    script runs locally, never at Streamlit Cloud runtime)."""
     if not KC_RC_RATIO_PARQUET.exists():
-        return pd.DataFrame(columns=["Date", "KC_RC_Ratio"])
+        return pd.DataFrame(columns=["Date", "KC_RC_Spread", "KC_RC_Ratio"])
     return pd.read_parquet(KC_RC_RATIO_PARQUET).sort_values("Date").reset_index(drop=True)
 
 
-@st.cache_data(ttl=600)
-def robusta_disappearance_share(smooth_months: int = 3):
-    """Robusta's share of (Robusta + Arabica) disappearance, in %, both raw
-    and smoothed over a trailing `smooth_months` window — the fundamentals
-    side of the KC/RC price-ratio comparison. Always same-month (lag=0) and
-    crop-year-independent (period basis doesn't matter for a monthly share)."""
-    rob = build_disappearance_by_type("Robusta", lag=0, start_month=CROP_YEAR)
-    ara = build_disappearance_by_type("Arabica", lag=0, start_month=CROP_YEAR)
-    if rob.empty or ara.empty:
-        return pd.DataFrame(columns=["Date", "RobustaShare", "RobustaShareSmoothed"])
-    m = (rob[["Date", "Disappearance"]].rename(columns={"Disappearance": "Robusta"})
-         .merge(ara[["Date", "Disappearance"]].rename(columns={"Disappearance": "Arabica"}), on="Date", how="inner")
-         .sort_values("Date"))
-    total = m["Robusta"] + m["Arabica"]
-    m["RobustaShare"] = (m["Robusta"] / total * 100).where(total > 0)
-    m["RobustaShareSmoothed"] = m["RobustaShare"].rolling(smooth_months, min_periods=1).mean()
-    return m[["Date", "RobustaShare", "RobustaShareSmoothed"]].reset_index(drop=True)

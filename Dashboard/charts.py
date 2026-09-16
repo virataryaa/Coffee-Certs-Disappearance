@@ -232,27 +232,26 @@ def diverging_bar_chart(x, y, height=COMPACT_HEIGHT):
     return fig
 
 
-def indexed_dual_chart(x1, y1, name1, x2, y2, name2, height=COMPACT_HEIGHT):
-    """Two series on one honest shared axis, each indexed to 100 at their
-    common start date — the anti-pattern this avoids is a dual-axis chart
-    (two y-scales), which invents a correlation via arbitrary scale
-    alignment. Indexing both to the same base value is the legitimate way
-    to compare two differently-scaled series on one axis."""
-    s1 = pd.Series(list(y1), index=pd.to_datetime(list(x1))).dropna().sort_index()
-    s2 = pd.Series(list(y2), index=pd.to_datetime(list(x2))).dropna().sort_index()
+def bars_with_secondary_line_chart(x_bars, bar_series: dict, x_line, y_line, line_name,
+                                    height=COMPACT_HEIGHT, line_color=INK):
+    """Grouped monthly bars (e.g. Robusta/Arabica disappearance) on the
+    primary axis, one line (e.g. the KC/RC spread) on a secondary axis.
+    Deliberately a dual-axis chart, by explicit request — the disappearance
+    volumes and the price spread are in unrelated units and orders of
+    magnitude, so there's no honest single-axis way to show both together;
+    the two axes are labeled so the reader isn't misled about scale."""
     fig = go.Figure()
-    if len(s1) and len(s2):
-        start = max(s1.index.min(), s2.index.min())
-        s1, s2 = s1[s1.index >= start], s2[s2.index >= start]
-        if len(s1) and len(s2):
-            s1 = s1 / s1.iloc[0] * 100
-            s2 = s2 / s2.iloc[0] * 100
-    fig.add_trace(go.Scatter(x=s1.index, y=s1.values, name=name1, mode="lines", line=dict(color=BLUE, width=2)))
-    fig.add_trace(go.Scatter(x=s2.index, y=s2.values, name=name2, mode="lines", line=dict(color=ORANGE, width=2)))
-    fig.add_hline(y=100, line_color=BASELINE, line_width=1)
-    layout = _base_layout(height, y_suffix="")
+    colors = {"Robusta": BLUE, "Arabica": ORANGE}
+    for name, y in bar_series.items():
+        fig.add_trace(go.Bar(x=x_bars, y=y, name=name, marker_color=colors.get(name, GREEN), marker_line_width=0))
+    fig.add_trace(go.Scatter(x=x_line, y=y_line, name=line_name, mode="lines",
+                              line=dict(color=line_color, width=2.2), yaxis="y2"))
+    layout = _base_layout(height)
+    layout["barmode"] = "group"
     layout["showlegend"] = True
     layout["legend"] = _legend()
+    layout["yaxis2"] = dict(overlaying="y", side="right", gridcolor=GRID, showgrid=False,
+                             tickfont=dict(color=MUTED, size=10), zeroline=False)
     fig.update_layout(**layout)
     return fig
 

@@ -3,7 +3,7 @@ import streamlit as st
 from data_loader import (
     build_disappearance, build_disappearance_by_type, period_table, ytd_by_period,
     cumulative_by_period, rolling_12m, rolling_window, complete_periods, period_month_order,
-    robusta_disappearance_share, load_kc_rc_ratio,
+    load_kc_rc_ratio,
     CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col,
     TDM_EU_PARQUET, ORIGIN_TYPE_SPLIT_PARQUET, KC_RC_RATIO_PARQUET,
     stock_types, stocks_calendar_table, load_stocks,
@@ -11,9 +11,9 @@ from data_loader import (
 )
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
-    single_line_chart, bar_chart, indexed_dual_chart,
+    single_line_chart, bar_chart, bars_with_secondary_line_chart,
     two_line_chart, multi_series_chart, diverging_bar_chart,
-    BLUE, ORANGE, AQUA,
+    BLUE, ORANGE, AQUA, INK,
 )
 from table_html import (
     heatmap_table_html, stocks_level_table_html, stocks_change_table_html, chart_header_html,
@@ -257,40 +257,22 @@ with tab_type:
             with col:
                 show_chart(cumulative_chart(cum_t_sel, current=ctx["current"]), f"{t} cumulative")
 
-    # ── Cross-check: physical mix vs market price ratio ─────────────────────
+    # ── Cross-check: monthly disappearance (bars) vs KC-RC spread (line) ────
     if KC_RC_RATIO_PARQUET.exists():
-        st.markdown('<p class="coffee-section">Physical vs market: disappearance mix vs KC/RC price ratio</p>',
-                    unsafe_allow_html=True)
-        smooth_col, _ = st.columns([2, 4])
-        with smooth_col:
-            smooth_label = st.radio("Smoothing", ["3m", "6m", "12m"], horizontal=True,
-                                     label_visibility="collapsed", key="share_smooth")
-        smooth_months = int(smooth_label.rstrip("m"))
-        share = robusta_disappearance_share(smooth_months=smooth_months)
-        ratio = load_kc_rc_ratio()
-        if not share.empty and not ratio.empty:
+        st.markdown('<p class="coffee-section">Disappearance vs KC-RC spread</p>', unsafe_allow_html=True)
+        rob_d = type_dfs["Robusta"][["Date", "Disappearance"]].rename(columns={"Disappearance": "Robusta"})
+        ara_d = type_dfs["Arabica"][["Date", "Disappearance"]].rename(columns={"Disappearance": "Arabica"})
+        spread_df = load_kc_rc_ratio()
+        merged = rob_d.merge(ara_d, on="Date", how="inner").merge(
+            spread_df[["Date", "KC_RC_Spread"]], on="Date", how="inner")
+        if not merged.empty:
             show_chart(
-                indexed_dual_chart(
-                    share["Date"], share["RobustaShareSmoothed"], f"Robusta share of disappearance ({smooth_label})",
-                    ratio["Date"], ratio["KC_RC_Ratio"], "KC/RC price ratio",
+                bars_with_secondary_line_chart(
+                    merged["Date"], {"Robusta": merged["Robusta"], "Arabica": merged["Arabica"]},
+                    merged["Date"], merged["KC_RC_Spread"], "KC-RC spread ($/MT)", line_color=INK,
                 ),
-                "Robusta share vs KC/RC ratio", "indexed to 100",
+                "Monthly disappearance vs KC-RC spread", f"bars: {y_unit} · line: $/MT, right axis",
             )
-            with st.expander("How to read this", expanded=False):
-                st.markdown(
-                    "Both series are indexed to 100 at their first common month — this is **not** a "
-                    "dual-axis chart (two arbitrary y-scales invent a correlation that isn't there); "
-                    "indexing to a shared base is the honest way to compare two differently-scaled "
-                    "series on one axis.\n\n"
-                    "**Robusta share of disappearance** = Robusta ÷ (Robusta + Arabica) physical "
-                    "disappearance, smoothed. **KC/RC price ratio** = Arabica (KC) futures price ÷ "
-                    "Robusta (RC) futures price, both in $/MT. If physical consumption is shifting "
-                    "toward Robusta (share rising) while the market still prices a wide Arabica "
-                    "premium (ratio flat or rising), that's a divergence between fundamentals and "
-                    "price — not a trade signal on its own, but worth a second look.\n\n"
-                    "Source: `Automator/build_price_ratio.py`, a snapshot of the ICEBREAKER ARB "
-                    "dashboard's own KC/RC front-month data — re-run it to refresh."
-                )
         else:
             st.info("Not enough overlapping history between disappearance and price data yet.")
 
