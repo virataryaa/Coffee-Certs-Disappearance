@@ -64,7 +64,7 @@ def _base_layout(height=COMPACT_HEIGHT, y_suffix=""):
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
         font=dict(color=INK_SECONDARY, family="system-ui, -apple-system, Segoe UI, sans-serif", size=11),
-        margin=dict(l=54, r=16, t=12, b=36),
+        margin=dict(l=54, r=16, t=12, b=44),
         height=height,
         showlegend=False,
         hovermode="x unified",
@@ -112,8 +112,13 @@ def seasonal_chart(wide, ref_years=None, current=None, previous=None, height=COM
     pal_state = {"i": 0}
     for cy in cols:
         color, width = _year_style(cy, current, previous, pal_state)
+        # Only the current/previous years get a legend entry — labeling
+        # every pastel filler year is what turns a 6+ year overlay into an
+        # unreadable, wrapping legend. Color still identifies them; the
+        # story is "how does the latest year compare," not "name every year."
         fig.add_trace(go.Scatter(x=wide.index, y=wide[cy], mode="lines+markers", name=str(cy),
-                                  line=dict(color=color, width=width), marker=dict(size=4)))
+                                  line=dict(color=color, width=width), marker=dict(size=4),
+                                  showlegend=cy in (current, previous)))
 
     layout = _base_layout(height)
     layout["showlegend"] = True
@@ -162,8 +167,11 @@ def cumulative_chart(cum_wide, current=None, previous=None, show_avg=True, heigh
     pal_state = {"i": 0}
     for cy in cols:
         color, width = _year_style(cy, current, previous, pal_state)
+        # Same rule as seasonal_chart: only current/previous get a legend
+        # entry, so a 6-year overlay never wraps into a crowded legend.
         fig.add_trace(go.Scatter(x=cum_wide.index, y=cum_wide[cy], mode="lines+markers", name=str(cy),
-                                  line=dict(color=color, width=width), marker=dict(size=4)))
+                                  line=dict(color=color, width=width), marker=dict(size=4),
+                                  showlegend=cy in (current, previous)))
     layout = _base_layout(height)
     layout["showlegend"] = True
     layout["legend"] = _legend()
