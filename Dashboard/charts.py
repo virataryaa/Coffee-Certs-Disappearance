@@ -250,6 +250,31 @@ def diverging_bar_chart(x, y, height=COMPACT_HEIGHT):
     return fig
 
 
+def indexed_dual_chart(x1, y1, name1, x2, y2, name2, height=COMPACT_HEIGHT):
+    """Two series on one honest shared axis, each indexed to 100 at their
+    common start date — the anti-pattern this avoids is a dual-axis chart
+    (two y-scales), which invents a correlation via arbitrary scale
+    alignment. Indexing both to the same base value is the legitimate way
+    to compare two differently-scaled series on one axis."""
+    s1 = pd.Series(list(y1), index=pd.to_datetime(list(x1))).dropna().sort_index()
+    s2 = pd.Series(list(y2), index=pd.to_datetime(list(x2))).dropna().sort_index()
+    fig = go.Figure()
+    if len(s1) and len(s2):
+        start = max(s1.index.min(), s2.index.min())
+        s1, s2 = s1[s1.index >= start], s2[s2.index >= start]
+        if len(s1) and len(s2):
+            s1 = s1 / s1.iloc[0] * 100
+            s2 = s2 / s2.iloc[0] * 100
+    fig.add_trace(go.Scatter(x=s1.index, y=s1.values, name=name1, mode="lines", line=dict(color=BLUE, width=2)))
+    fig.add_trace(go.Scatter(x=s2.index, y=s2.values, name=name2, mode="lines", line=dict(color=ORANGE, width=2)))
+    fig.add_hline(y=100, line_color=BASELINE, line_width=1)
+    layout = _base_layout(height, y_suffix="")
+    layout["showlegend"] = True
+    layout["legend"] = _legend()
+    fig.update_layout(**layout)
+    return fig
+
+
 def rolling_multi_chart(df_by_type: dict, height=COMPACT_HEIGHT + 40):
     """Rolling N-month Disappearance for 2+ coffee types on one axis —
     e.g. {'Robusta': (dates, values), 'Arabica': (dates, values)}. Same unit,

@@ -7,6 +7,7 @@ DATABASE_DIR = Path(__file__).resolve().parent.parent / "Database"
 STOCKS_PATH = DATABASE_DIR / "Coffee Stocks.xlsx"
 TDM_EU_PARQUET = DATABASE_DIR / "tdm_coffee_eu.parquet"
 ORIGIN_TYPE_SPLIT_PARQUET = DATABASE_DIR / "origin_type_split.parquet"
+KC_RC_RATIO_PARQUET = DATABASE_DIR / "kc_rc_ratio.parquet"
 
 STOCKS_SHEET = "ECF"
 TOTAL_ROW = "Total Europe"
@@ -282,8 +283,8 @@ def period_table(df, start_month: int = CROP_YEAR):
     order = order.sort_values("start")["Period"].tolist()
     pivot = pivot.reindex(order).reset_index()
     pivot = _drop_leading_incomplete(pivot, month_order)
-    pivot["Total"] = pivot[month_order].sum(axis=1, skipna=True, min_count=1)
-    pivot["Total YoY %"] = pivot["Total"].pct_change() * 100
+    pivot["Total"] = pivot[month_order].sum(axis=1, min_count=len(month_order))
+    pivot["Total YoY %"] = pivot["Total"].pct_change(fill_method=None) * 100
     return pivot
 
 
@@ -338,3 +339,34 @@ def rolling_window(df, window):
 def rolling_12m(df):
     r = rolling_window(df, 12)
     return r.rename(columns={"Rolling": "Rolling12mKMT"}).assign(Rolling12mKMT=lambda d: d["Rolling12mKMT"] / 1000)
+
+
+@st.cache_data(ttl=600)
+def load_kc_rc_ratio():
+    """Monthly KC (Arabica futures, converted to $/MT) / RC (Robusta
+    futures, $/MT) price ratio — a derived, self-contained snapshot built
+    by Automator/build_price_ratio.py from the ICEBREAKER ARB dashboard's
+    own front-month data (a sibling repo; read only when that script runs
+    locally, never at Streamlit Cloud runtime)."""
+    if not KC_RC_RATIO_PARQUET.exists():
+        return pd.DataFrame(columns=["Date", "KC_RC_Ratio"])
+    return pd.read_parquet(KC_RC_RATIO_PARQUET).sort_values("Date").reset_index(drop=True)
+
+
+@st.cache_data(ttl=600)
+def robusta_disappearance_share(smooth_months: int = 3):
+    """Robusta's share of (Robusta + Arabica) disappearance, in %, both raw
+    and smoothed over a trailing `smooth_months` window — the fundamentals
+    side of the KC/RC price-ratio comparison. Always same-month (lag=0) and
+    crop-year-independent (period basis doesn't matter for a monthly share)."""
+    rob = build_disappearance_by_type("Robusta", lag=0, start_month=CROP_YEAR)
+    ara = build_disappearance_by_type("Arabica", lag=0, start_month=CROP_YEAR)
+    if rob.empty or ara.empty:
+        return pd.DataFrame(columns=["Date", "RobustaShare", "RobustaShareSmoothed"])
+    m = (rob[["Date", "Disappearance"]].rename(columns={"Disappearance": "Robusta"})
+         .merge(ara[["Date", "Disappearance"]].rename(columns={"Disappearance": "Arabica"}), on="Date", how="inner")
+         .sort_values("Date"))
+    total = m["Robusta"] + m["Arabica"]
+    m["RobustaShare"] = (m["Robusta"] / total * 100).where(total > 0)
+    m["RobustaShareSmoothed"] = m["RobustaShare"].rolling(smooth_months, min_periods=1).mean()
+    return m[["Date", "RobustaShare", "RobustaShareSmoothed"]].reset_index(drop=True)

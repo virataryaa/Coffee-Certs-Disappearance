@@ -3,14 +3,15 @@ import streamlit as st
 from data_loader import (
     build_disappearance, build_disappearance_by_type, period_table, ytd_by_period,
     cumulative_by_period, rolling_12m, rolling_window, complete_periods, period_month_order,
+    robusta_disappearance_share, load_kc_rc_ratio,
     CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col,
-    TDM_EU_PARQUET, ORIGIN_TYPE_SPLIT_PARQUET,
+    TDM_EU_PARQUET, ORIGIN_TYPE_SPLIT_PARQUET, KC_RC_RATIO_PARQUET,
     stock_types, stocks_calendar_table, load_stocks,
     stocks_total_series, stocks_composition_series,
 )
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
-    single_line_chart, bar_chart, latest_vs_avg_bar_chart,
+    single_line_chart, bar_chart, latest_vs_avg_bar_chart, indexed_dual_chart,
     two_line_chart, multi_series_chart, diverging_bar_chart,
     BLUE, ORANGE, AQUA,
 )
@@ -247,6 +248,44 @@ with tab_type:
         rolling_multi_chart(rolling_series),
         f"Rolling {window_label} disappearance", f"Robusta vs Arabica · {y_unit}",
     )
+
+    if KC_RC_RATIO_PARQUET.exists():
+        st.markdown('<p class="coffee-caption" style="font-weight:600;color:#52514e;">'
+                    'Physical vs market: Robusta share of disappearance vs KC/RC price ratio</p>',
+                    unsafe_allow_html=True)
+        smooth_col, _ = st.columns([2, 4])
+        with smooth_col:
+            smooth_label = st.radio("Smoothing", ["3m", "6m", "12m"], horizontal=True,
+                                     label_visibility="collapsed", key="share_smooth")
+        smooth_months = int(smooth_label.rstrip("m"))
+        share = robusta_disappearance_share(smooth_months=smooth_months)
+        ratio = load_kc_rc_ratio()
+        if not share.empty and not ratio.empty:
+            show_chart(
+                indexed_dual_chart(
+                    share["Date"], share["RobustaShareSmoothed"], f"Robusta share of disappearance ({smooth_label} avg)",
+                    ratio["Date"], ratio["KC_RC_Ratio"], "KC/RC price ratio",
+                ),
+                "Robusta share of disappearance vs KC/RC price ratio",
+                f"Both indexed to 100 at first common month · {smooth_label} smoothing",
+            )
+            with st.expander("How to read this", expanded=False):
+                st.markdown(
+                    "Both series are indexed to 100 at their first common month — this is **not** a "
+                    "dual-axis chart (two arbitrary y-scales invent a correlation that isn't there); "
+                    "indexing to a shared base is the honest way to compare two differently-scaled "
+                    "series on one axis.\n\n"
+                    "**Robusta share of disappearance** = Robusta ÷ (Robusta + Arabica) physical "
+                    "disappearance, smoothed. **KC/RC price ratio** = Arabica (KC) futures price ÷ "
+                    "Robusta (RC) futures price, both in $/MT. If physical consumption is shifting "
+                    "toward Robusta (share rising) while the market still prices a wide Arabica "
+                    "premium (ratio flat or rising), that's a divergence between fundamentals and "
+                    "price — not a trade signal on its own, but worth a second look.\n\n"
+                    "Source: `Automator/build_price_ratio.py`, a snapshot of the ICEBREAKER ARB "
+                    "dashboard's own KC/RC front-month data — re-run it to refresh."
+                )
+        else:
+            st.info("Not enough overlapping history between disappearance and price data yet.")
 
     for t in ("Robusta", "Arabica"):
         df_t = type_dfs[t]
