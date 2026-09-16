@@ -366,14 +366,16 @@ with tab_type:
                     corr_row.append(corr)
                 r2_grid.append(r2_row)
                 corr_grid.append(corr_row)
-            show_chart(
-                r2_heatmap_chart(r2_grid, lag_grid, smooth_grid, "Arb lag (months)", "Rolling avg (months)"),
-                "R² grid: Robusta share vs KC-RC spread", "lag 0-24m x rolling avg 1-12m",
-            )
-            show_chart(
-                corr_heatmap_chart(corr_grid, lag_grid, smooth_grid, "Arb lag (months)", "Rolling avg (months)"),
-                "Pearson correlation grid: Robusta share vs KC-RC spread", "lag 0-24m x rolling avg 1-12m",
-            )
+            with st.expander("Pearson correlation grid: Robusta share vs KC-RC spread", expanded=True):
+                show_chart(
+                    corr_heatmap_chart(corr_grid, lag_grid, smooth_grid, "Arb lag (months)", "Rolling avg (months)"),
+                    "Pearson correlation grid", "lag 0-24m x rolling avg 1-12m",
+                )
+            with st.expander("R² grid: Robusta share vs KC-RC spread", expanded=False):
+                show_chart(
+                    r2_heatmap_chart(r2_grid, lag_grid, smooth_grid, "Arb lag (months)", "Rolling avg (months)"),
+                    "R² grid", "lag 0-24m x rolling avg 1-12m",
+                )
         else:
             st.info("Not enough overlapping history between disappearance and price data yet.")
 
