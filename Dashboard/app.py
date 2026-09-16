@@ -332,6 +332,14 @@ with tab_type:
                 ),
                 "Robusta share of disappearance vs KC-RC spread", f"%, left{smooth_note} · {arb_unit}{shift_note}, right",
             )
+
+            scatter_fig, r2 = scatter_with_r2(
+                share_merged["SpreadDisplay"], share_merged["RobustaSharePct"],
+                line_label, "Robusta % of disappearance",
+            )
+            show_chart(
+                scatter_fig, "Robusta share vs KC-RC spread (scatter)", f"R² = {r2:.2f}",
+            )
         else:
             st.info("Not enough overlapping history between disappearance and price data yet.")
 
