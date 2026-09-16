@@ -214,6 +214,14 @@ def main():
         len(df),
         df[["FLOW", "YEAR", "MONTH"]].drop_duplicates().shape[0],
     )
+    latest_year = int(df["YEAR"].max())
+    latest_month = int(df.loc[df["YEAR"] == latest_year, "MONTH"].max())
+    log.info(
+        "Latest month now in the data: %04d-%02d  (this is the newest month TDM has "
+        "published as of today — TDM's own customs reporting typically lags 1-2 "
+        "months behind the calendar, so this being 'behind' is normal, not a bug)",
+        latest_year, latest_month,
+    )
     log.info("=" * 60)
 
 
