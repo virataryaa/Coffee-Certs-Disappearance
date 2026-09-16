@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -182,6 +183,30 @@ def two_line_chart(x, y1, name1, y2, name2, height=COMPACT_HEIGHT):
     layout["legend"] = _legend()
     fig.update_layout(**layout)
     return fig
+
+
+def scatter_with_r2(x, y, x_name, y_name, height=COMPACT_HEIGHT):
+    """Scatter of two series with a fitted regression line and R² — returns
+    (figure, r2) so the caller can put R² in the chart's own header text
+    rather than duplicating it inside the plot."""
+    pair = pd.DataFrame({"x": x, "y": y}).dropna()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=pair["x"], y=pair["y"], mode="markers", name=f"{x_name} vs {y_name}",
+                              marker=dict(color=BLUE, size=6, opacity=0.75,
+                                          line=dict(color=SURFACE, width=1))))
+    r2 = 0.0
+    if len(pair) >= 2 and pair["x"].std() > 0:
+        slope, intercept = np.polyfit(pair["x"], pair["y"], 1)
+        x_line = np.linspace(pair["x"].min(), pair["x"].max(), 100)
+        fig.add_trace(go.Scatter(x=x_line, y=slope * x_line + intercept, mode="lines", name="Fit",
+                                  line=dict(color=CRITICAL, width=1.5, dash="dash")))
+        r2 = float(pair["x"].corr(pair["y"]) ** 2)
+    layout = _base_layout(height)
+    layout["showlegend"] = False
+    layout["xaxis"]["title"] = dict(text=x_name, font=dict(color=MUTED, size=10))
+    layout["yaxis"]["title"] = dict(text=y_name, font=dict(color=MUTED, size=10))
+    fig.update_layout(**layout)
+    return fig, r2
 
 
 def multi_series_chart(df_x_date, series: dict, height=COMPACT_HEIGHT):

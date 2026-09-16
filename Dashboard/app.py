@@ -13,7 +13,7 @@ from data_loader import (
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
     single_line_chart, bars_with_secondary_line_chart, line_with_secondary_line_chart,
-    two_line_chart, multi_series_chart, diverging_bar_chart,
+    two_line_chart, multi_series_chart, diverging_bar_chart, scatter_with_r2,
     BLUE, ORANGE, AQUA, INK,
 )
 from table_html import (
@@ -165,9 +165,13 @@ def render_disappearance(build_fn, title, caption, key_prefix, footnote=None):
 
     c5, c6 = st.columns(2)
     with c5:
-        show_chart(single_line_chart(df["Date"], df["NetImports"]), "Net Imports (GBE)", y_unit)
+        show_chart(
+            two_line_chart(df["Date"], df["NetImports"], "Net Imports (GBE)", df["Disappearance"], "Disappearance"),
+            "Net Imports vs Disappearance", y_unit,
+        )
     with c6:
-        show_chart(single_line_chart(df["Date"], df["Disappearance"]), "Disappearance", y_unit)
+        scatter_fig, r2 = scatter_with_r2(df["NetImports"], df["Disappearance"], "Net Imports", "Disappearance")
+        show_chart(scatter_fig, "Net Imports vs Disappearance (scatter)", f"R² = {r2:.2f}")
 
 
 TYPE_FOOTNOTE = (
