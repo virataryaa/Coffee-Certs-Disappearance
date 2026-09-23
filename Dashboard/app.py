@@ -1,20 +1,23 @@
 import pandas as pd
 import streamlit as st
 
+import numpy as np
+
 from data_loader import (
     build_disappearance, build_disappearance_by_type, period_table, ytd_by_period,
     cumulative_by_period, rolling_12m, rolling_window, complete_periods, period_month_order,
-    load_kc_rc_ratio,
-    CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col, KC_FACTOR,
+    load_kc_rc_ratio, load_net_imports,
+    CALENDAR, CROP_YEAR, UNIT_MT, UNIT_BAGS, to_unit, unit_col, KC_FACTOR, BAGS_PER_MT,
     TDM_EU_PARQUET, ORIGIN_TYPE_SPLIT_PARQUET, KC_RC_RATIO_PARQUET,
     stock_types, stocks_calendar_table, load_stocks,
     stocks_total_series, stocks_composition_series,
+    excess_imports_series, stock_change_series_bags,
 )
 from charts import (
     seasonal_chart, cumulative_chart, latest_vs_band_chart, rolling_multi_chart,
     single_line_chart, bars_with_secondary_line_chart, line_with_secondary_line_chart,
     two_line_chart, multi_series_chart, diverging_bar_chart, scatter_with_r2,
-    r2_heatmap_chart, corr_heatmap_chart,
+    r2_heatmap_chart, corr_heatmap_chart, scatter_with_projection,
     BLUE, ORANGE, AQUA, INK,
 )
 from table_html import (
@@ -187,7 +190,9 @@ TYPE_FOOTNOTE = (
     "approximation — Europe is assumed to re-export roughly the type mix it's currently holding."
 )
 
-tab_disapp, tab_type, tab_stocks = st.tabs(["Disappearance", "Arabica / Robusta", "ECF Stocks"])
+tab_disapp, tab_type, tab_stocks, tab_projection = st.tabs(
+    ["Disappearance", "Arabica / Robusta", "ECF Stocks", "ECF Projection"]
+)
 
 # ── Disappearance ─────────────────────────────────────────────────────────────
 with tab_disapp:
@@ -430,4 +435,125 @@ with tab_stocks:
     st.caption(
         "Data starts January 2020 — Aug–Dec 2019 was a one-off ECF certified-stock "
         "re-certification event, dropped rather than shown as real seasonality."
+    )
+
+# ── ECF Projection ────────────────────────────────────────────────────────────
+with tab_projection:
+    st.markdown('<h1 class="coffee-title">ECF Projection</h1>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="coffee-caption">ECF certified stocks release bi-monthly, ~1 month after the '
+        "period ends — the next release adds two new months of data at once. This estimates that "
+        "pending 2-month stock change from EU “excess imports” (TDM reports these sooner) "
+        "before ECF confirms it.</p>",
+        unsafe_allow_html=True,
+    )
+
+    stock_levels = load_stocks("Total Europe").sort_values("Date").reset_index(drop=True)
+    net = load_net_imports()
+    if stock_levels.empty or net.empty:
+        st.info("Not enough stock or import history yet to build a projection.")
+    else:
+        stock_chg = stock_change_series_bags()
+        last_row = stock_levels.iloc[-1]
+        last_date, last_level_bags = last_row["Date"], last_row["Bags"]
+        pending_dates = [last_date + pd.DateOffset(months=1), last_date + pd.DateOffset(months=2)]
+
+        # Pick whichever trailing-average convention (include vs exclude the
+        # current month in its own 12m baseline) fits history better.
+        best = None
+        for include_current in (True, False):
+            ei = excess_imports_series(include_current).sort_values("Date").reset_index(drop=True)
+            ei["Rolling2m"] = ei["ExcessImports"].rolling(2, min_periods=2).mean()
+            merged = ei[["Date", "Rolling2m"]].rename(columns={"Rolling2m": "ExcessRolling2m"}).merge(
+                stock_chg[["Date", "Rolling2m"]].rename(columns={"Rolling2m": "StockRolling2m"}),
+                on="Date", how="inner",
+            ).dropna()
+            r2 = float(merged["ExcessRolling2m"].corr(merged["StockRolling2m"]) ** 2) if len(merged) >= 2 else 0.0
+            if best is None or r2 > best["r2"]:
+                best = dict(include_current=include_current, ei=ei, merged=merged, r2=r2)
+
+        ei, merged, r2 = best["ei"], best["merged"], best["r2"]
+        variant_note = "including" if best["include_current"] else "excluding"
+        st.caption(
+            f"Trailing 12m import baseline, {variant_note} the current month "
+            f"(best historical fit: R² = {r2:.2f})."
+        )
+
+        show_chart(
+            two_line_chart(
+                merged["Date"], merged["ExcessRolling2m"] / 1e6, "Excess imports (rolling 2m)",
+                merged["StockRolling2m"] / 1e6, "ECF stock change (rolling 2m)",
+            ),
+            "Excess imports vs ECF stock change", "Mn Bags, rolling 2m",
+        )
+
+        # A brand-new month's TDM figure can show up before customs reporting
+        # has caught up — Imports far below the trailing average signals an
+        # incomplete/preliminary read, not a real import collapse, and would
+        # otherwise produce a wildly overstated "excess imports" swing.
+        net_sorted = net.sort_values("Date").reset_index(drop=True)
+        net_sorted["ImportsTrailingAvg"] = net_sorted["Imports"].rolling(12, min_periods=6).mean()
+        net_idx = net_sorted.set_index("Date")
+        have_import_months = set(net_sorted["Date"])
+        missing_months, incomplete_months = [], []
+        for d in pending_dates:
+            if d not in have_import_months:
+                missing_months.append(d)
+            elif net_idx.loc[d, "Imports"] < 0.3 * net_idx.loc[d, "ImportsTrailingAvg"]:
+                incomplete_months.append(d)
+        unusable_months = missing_months + incomplete_months
+
+        if unusable_months:
+            if missing_months:
+                st.warning(
+                    "TDM import data doesn't cover " +
+                    ", ".join(d.strftime("%b %Y") for d in missing_months) +
+                    " yet — need both pending months' imports to project."
+                )
+            if incomplete_months:
+                st.warning(
+                    ", ".join(d.strftime("%b %Y") for d in incomplete_months) +
+                    " TDM import data looks incomplete (customs reporting hasn't caught up yet) "
+                    "rather than a real collapse — waiting for a fuller read before projecting."
+                )
+            show_chart(
+                scatter_with_r2(merged["ExcessRolling2m"] / 1e6, merged["StockRolling2m"] / 1e6,
+                                 "Excess imports (Mn Bags)", "ECF stock change (Mn Bags)")[0],
+                "Excess imports vs ECF stock change (scatter)", f"R² = {r2:.2f}",
+            )
+        else:
+            pending_excess = ei[ei["Date"].isin(pending_dates)]["ExcessImports"]
+            x_new = float(pending_excess.mean())
+            slope, intercept = np.polyfit(merged["ExcessRolling2m"], merged["StockRolling2m"], 1)
+            predicted_avg_change = slope * x_new + intercept
+            predicted_total_change = predicted_avg_change * 2
+            predicted_level = last_level_bags + predicted_total_change
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric(f"Last known ({last_date.strftime('%b %Y')})", f"{last_level_bags / 1e6:.2f} Mn bags")
+            k2.metric(
+                f"Projected ({pending_dates[1].strftime('%b %Y')})",
+                f"{predicted_level / 1e6:.2f} Mn bags",
+                f"{predicted_total_change / 1e6:+.2f} Mn bags",
+            )
+            k3.metric("Excess imports input", f"{x_new / 1e6:+.2f} Mn bags",
+                       help=f"Avg of {pending_dates[0].strftime('%b')} + {pending_dates[1].strftime('%b')} excess imports")
+            k4.metric("Model fit", f"R² = {r2:.2f}")
+
+            show_chart(
+                scatter_with_projection(
+                    merged["ExcessRolling2m"] / 1e6, merged["StockRolling2m"] / 1e6,
+                    "Excess imports (Mn Bags)", "ECF stock change (Mn Bags)",
+                    proj_point=(x_new / 1e6, predicted_avg_change / 1e6),
+                )[0],
+                "Excess imports vs ECF stock change (scatter)",
+                f"R² = {r2:.2f} · orange star = projection for {pending_dates[0].strftime('%b')}"
+                f"-{pending_dates[1].strftime('%b %Y')}",
+            )
+
+    st.caption(
+        "Excess imports = monthly EU net imports minus their own trailing 12-month average, "
+        "smoothed to a rolling 2-month average and regressed against ECF's own rolling 2-month "
+        "stock change. The projection assumes that historical relationship holds for the two "
+        "months ECF hasn't reported yet."
     )

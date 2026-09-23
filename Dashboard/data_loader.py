@@ -343,6 +343,33 @@ def rolling_12m(df):
 
 
 @st.cache_data(ttl=600)
+def excess_imports_series(include_current: bool, window: int = 12):
+    """Monthly EU Net Imports (Bags) minus a trailing N-month average — the
+    'excess imports' signal used to project ECF stock changes ahead of the
+    bi-monthly ECF release. include_current=True averages months t-11..t;
+    False averages t-12..t-1 (current month excluded from its own baseline)."""
+    net = load_net_imports()
+    if net.empty:
+        return pd.DataFrame(columns=["Date", "NetImportsBags", "ExcessImports"])
+    s = net[["Date", "NetImports"]].sort_values("Date").reset_index(drop=True)
+    s["NetImportsBags"] = s["NetImports"] * BAGS_PER_MT
+    base = s["NetImportsBags"] if include_current else s["NetImportsBags"].shift(1)
+    s["TrailingAvg"] = base.rolling(window, min_periods=window).mean()
+    s["ExcessImports"] = s["NetImportsBags"] - s["TrailingAvg"]
+    return s[["Date", "NetImportsBags", "ExcessImports"]]
+
+
+@st.cache_data(ttl=600)
+def stock_change_series_bags():
+    """Monthly Total Europe ECF stock change (Bags) plus its rolling 2-month
+    average — the dependent side of the ECF Projection regression."""
+    total = load_stocks(TOTAL_ROW)
+    s = total[["Date", "BagsChange"]].sort_values("Date").reset_index(drop=True)
+    s["Rolling2m"] = s["BagsChange"].rolling(2, min_periods=2).mean()
+    return s
+
+
+@st.cache_data(ttl=600)
 def load_kc_rc_ratio():
     """Monthly KC (Arabica futures, $/MT) vs RC (Robusta futures, $/MT):
     KC_RC_Spread (Arabica premium, $/MT — same quantity as the ICEBREAKER

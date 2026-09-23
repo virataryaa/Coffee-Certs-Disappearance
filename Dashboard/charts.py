@@ -246,6 +246,34 @@ def corr_heatmap_chart(z, x_labels, y_labels, x_title="", y_title="", height=COM
     return fig
 
 
+def scatter_with_projection(x, y, x_name, y_name, proj_point=None, height=COMPACT_HEIGHT):
+    """Scatter + regression line, same as scatter_with_r2, plus an optional
+    out-of-sample projected point (predicted from the fit, not yet observed
+    in the underlying data) highlighted as an orange star."""
+    pair = pd.DataFrame({"x": x, "y": y}).dropna()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=pair["x"], y=pair["y"], mode="markers", name=f"{x_name} vs {y_name}",
+                              marker=dict(color=BLUE, size=6, opacity=0.75,
+                                          line=dict(color=SURFACE, width=1))))
+    r2 = 0.0
+    if len(pair) >= 2 and pair["x"].std() > 0:
+        slope, intercept = np.polyfit(pair["x"], pair["y"], 1)
+        x_line = np.linspace(pair["x"].min(), pair["x"].max(), 100)
+        fig.add_trace(go.Scatter(x=x_line, y=slope * x_line + intercept, mode="lines", name="Fit",
+                                  line=dict(color=CRITICAL, width=1.5, dash="dash")))
+        r2 = float(pair["x"].corr(pair["y"]) ** 2)
+    if proj_point is not None:
+        fig.add_trace(go.Scatter(x=[proj_point[0]], y=[proj_point[1]], mode="markers", name="Projected",
+                                  marker=dict(color=ORANGE, size=12, symbol="star",
+                                              line=dict(color=INK, width=1))))
+    layout = _base_layout(height)
+    layout["showlegend"] = False
+    layout["xaxis"]["title"] = dict(text=x_name, font=dict(color=MUTED, size=10))
+    layout["yaxis"]["title"] = dict(text=y_name, font=dict(color=MUTED, size=10))
+    fig.update_layout(**layout)
+    return fig, r2
+
+
 def multi_series_chart(df_x_date, series: dict, height=COMPACT_HEIGHT):
     """<=4 categorical series sharing one axis, direct-labeled at the line end
     (mandatory once you're at 4 series). `series` = {name: (y_values, color)}."""
