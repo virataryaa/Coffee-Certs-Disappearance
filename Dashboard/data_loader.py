@@ -360,6 +360,38 @@ def excess_imports_series(include_current: bool, window: int = 12):
 
 
 @st.cache_data(ttl=600)
+def best_excess_imports_fit():
+    """Grid-search the excess-imports -> ECF stock-change relationship over
+    the trailing-average window (3-24m), whether that window includes the
+    current month, and an extra smoothing pass on the excess-imports side
+    (1-6m) — plus a small lead/lag search — picking whichever combination
+    maximizes historical R². The stock-change side is always its true
+    bi-monthly rolling-2m change (that's the real ECF reporting cadence),
+    kept fixed so the winning fit still means "predict the 2 pending
+    months' combined change," not something a wider stock window would muddy.
+    Returns a dict of the winning params plus n (months used) and r2."""
+    stock_chg = stock_change_series_bags()
+    best = None
+    for include_current in (True, False):
+        for window in range(3, 25):
+            ei = excess_imports_series(include_current, window).sort_values("Date")
+            for excess_roll in (1, 2, 3, 4, 5, 6):
+                ei2 = ei[["Date", "ExcessImports"]].copy()
+                ei2["X"] = ei2["ExcessImports"].rolling(excess_roll, min_periods=excess_roll).mean()
+                for lag in range(-6, 7):
+                    sc = stock_chg[["Date", "Rolling2m"]].rename(columns={"Rolling2m": "Y"}).copy()
+                    sc["Date"] = sc["Date"] + pd.DateOffset(months=lag)
+                    m = ei2[["Date", "X"]].merge(sc, on="Date", how="inner").dropna()
+                    if len(m) < 30 or m["X"].std() == 0:
+                        continue
+                    r2 = float(m["X"].corr(m["Y"]) ** 2)
+                    if best is None or r2 > best["r2"]:
+                        best = dict(include_current=include_current, window=window,
+                                    excess_roll=excess_roll, lag=lag, r2=r2, n=len(m))
+    return best
+
+
+@st.cache_data(ttl=600)
 def stock_change_series_bags():
     """Monthly Total Europe ECF stock change (Bags) plus its rolling 2-month
     average — the dependent side of the ECF Projection regression."""
