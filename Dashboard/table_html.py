@@ -52,6 +52,27 @@ _CHART_HEADER_STYLE = f"""
 """
 
 
+def stat_row_html(items):
+    """Compact inline stat row — no card chrome, just label + colored value
+    pairs on one line. Each item: (label, value, color)."""
+    parts = "".join(
+        f'<span style="margin-right:22px;white-space:nowrap">'
+        f'<span style="color:{MUTED};font-size:10px">{label} </span>'
+        f'<span style="color:{color};font-size:14px;font-weight:600">{value}</span></span>'
+        for label, value, color in items
+    )
+    return _flatten(f'<div style="margin:8px 0 12px;display:flex;flex-wrap:wrap">{parts}</div>')
+
+
+def note_html(text):
+    """One-line note in a subtle tinted pill — for a minor caveat that
+    doesn't need st.warning's full-width colored banner."""
+    return _flatten(f"""
+    <div style="background:#f2f1ee;color:{MUTED};font-size:11px;padding:5px 10px;
+                border-radius:6px;margin:4px 0 10px;">{text}</div>
+    """)
+
+
 def chart_header_html(title, detail=""):
     """Real DOM text for a chart's title, rendered via st.markdown directly
     above st.plotly_chart — a Plotly-internal title's position is a fraction
