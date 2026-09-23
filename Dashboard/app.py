@@ -511,42 +511,59 @@ with tab_projection:
                     missing_months.append(d)
                 elif net_idx.loc[d, "Imports"] < 0.3 * net_idx.loc[d, "ImportsTrailingAvg"]:
                     incomplete_months.append(d)
-            unusable = missing_months or incomplete_months or source_date not in set(ei["Date"])
+            # Rather than blocking entirely, an incomplete/missing month is
+            # assumed NEUTRAL — its true excess imports assumed to land at
+            # 0 (i.e. right on its own trailing average) — so a full Jul+Aug
+            # projection can still be produced, clearly flagged as resting on
+            # that assumption rather than a confirmed TDM read.
+            assumed_months = sorted(set(missing_months) | set(incomplete_months))
+            ei_adj = ei.copy()
+            for d in assumed_months:
+                if d in set(ei_adj["Date"]):
+                    ei_adj.loc[ei_adj["Date"] == d, "ExcessImports"] = 0.0
+                else:
+                    ei_adj = pd.concat(
+                        [ei_adj, pd.DataFrame([{"Date": d, "NetImportsBags": float("nan"), "ExcessImports": 0.0}])],
+                        ignore_index=True,
+                    )
+            ei_adj = ei_adj.sort_values("Date").reset_index(drop=True)
+            ei_adj["X"] = ei_adj["ExcessImports"].rolling(fit["excess_roll"], min_periods=fit["excess_roll"]).mean()
 
-            if unusable:
-                if missing_months:
-                    st.warning(
-                        "TDM import data doesn't cover " +
-                        ", ".join(d.strftime("%b %Y") for d in missing_months) +
-                        " yet — needed for the projection's lookback window."
-                    )
-                if incomplete_months:
-                    st.warning(
-                        ", ".join(d.strftime("%b %Y") for d in incomplete_months) +
-                        " TDM import data looks incomplete (customs reporting hasn't caught up yet) "
-                        "rather than a real collapse — waiting for a fuller read before projecting."
-                    )
+            if assumed_months:
+                st.warning(
+                    "Assuming " +
+                    ", ".join(d.strftime("%b %Y") for d in assumed_months) +
+                    " lands right on its trailing average (neutral excess imports = 0) — TDM's "
+                    "actual read for that month is still incomplete (customs reporting lag). "
+                    "This projection will update once the real figure comes in."
+                )
+
+            if source_date not in set(ei_adj["Date"]):
+                st.info("Not enough import history yet to reach the projection date, even with a neutral assumption.")
                 show_chart(
                     scatter_with_r2(merged["X"] / 1e6, merged["Y"] / 1e6,
                                      "Excess imports (Mn Bags)", "ECF stock change (Mn Bags)")[0],
                     "Excess imports vs ECF stock change (scatter)", f"R² = {r2:.2f}",
                 )
             else:
-                x_new = float(ei.loc[ei["Date"] == source_date, "X"].iloc[0])
+                x_new = float(ei_adj.loc[ei_adj["Date"] == source_date, "X"].iloc[0])
                 slope, intercept = np.polyfit(merged["X"], merged["Y"], 1)
                 predicted_avg_change = slope * x_new + intercept
                 predicted_total_change = predicted_avg_change * 2
                 predicted_level = last_level_bags + predicted_total_change
+                assumed_note = " (assumed)" if assumed_months else ""
 
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric(f"Last known ({last_date.strftime('%b %Y')})", f"{last_level_bags / 1e6:.2f} Mn bags")
                 k2.metric(
-                    f"Projected ({pending_dates[1].strftime('%b %Y')})",
+                    f"Projected ({pending_dates[1].strftime('%b %Y')}){assumed_note}",
                     f"{predicted_level / 1e6:.2f} Mn bags",
                     f"{predicted_total_change / 1e6:+.2f} Mn bags",
                 )
                 k3.metric("Excess imports input", f"{x_new / 1e6:+.2f} Mn bags",
-                           help=f"{fit['excess_roll']}m-smoothed excess imports as of {source_date.strftime('%b %Y')}")
+                           help=f"{fit['excess_roll']}m-smoothed excess imports as of {source_date.strftime('%b %Y')}"
+                                + (f"; {', '.join(d.strftime('%b %Y') for d in assumed_months)} assumed neutral"
+                                   if assumed_months else ""))
                 k4.metric("Model fit", f"R² = {r2:.2f}")
 
                 show_chart(
@@ -557,7 +574,7 @@ with tab_projection:
                     )[0],
                     "Excess imports vs ECF stock change (scatter)",
                     f"R² = {r2:.2f} · orange star = projection for {pending_dates[0].strftime('%b')}"
-                    f"-{pending_dates[1].strftime('%b %Y')}",
+                    f"-{pending_dates[1].strftime('%b %Y')}{assumed_note}",
                 )
 
     st.caption(
